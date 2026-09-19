@@ -66,6 +66,10 @@ if __name__ == "__main__":
         logger.info("DRY RUN: commands are only logged (use --live to send)")
         client = DryRunClient(real_client)
 
+    
+    # Gates should start closed
+    client.close_gate("gateB")
+
     db = None
     if args.db:
         from database_adapter import DatabaseAdapter

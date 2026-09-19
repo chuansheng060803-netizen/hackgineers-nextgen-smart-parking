@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from tkinter.font import names
 
 from parking_algorithm import select_parking_spot
 from payment_logic import get_post_payment_action, process_payment
@@ -137,6 +138,8 @@ class CarFlow:
                 self._on_car_spot_action(event)
             elif event_class == "payment_made":
                 self._on_payment_made(event)
+            elif event_class == "gate_action":
+                self._on_gate_action(event)
             self._retry_pending(skip=event.get("CarPlateNumber"))
 
     def request_exit(self, plate):
@@ -178,16 +181,29 @@ class CarFlow:
         return False
 
     def _open_gates(self, names, why):
-        """Raise the barriers a car needs to pass. Without this no car can move:
-        a closed barrier leaves them queued at the entry for ever."""
+        """Raise the barriers a car needs to pass."""
         for name in names:
             if not self._gate_is_ok(name):
                 continue
+
             try:
                 self.client.open_gate(name)
                 logger.info("Opened %s (%s)", name, why)
             except (SimulatorError, AttributeError) as e:
                 logger.error("open_gate(%s) failed: %s", name, e)
+
+
+    def _close_gates(self, names, why):
+        """Close the specified barriers."""
+        for name in names:
+            if not self._gate_is_ok(name):
+                continue
+
+            try:
+                self.client.close_gate(name)
+                logger.info("Closed %s (%s)", name, why)
+            except (SimulatorError, AttributeError) as e:
+                logger.error("close_gate(%s) failed: %s", name, e)
 
     # ---- event gate -------------------------------------------------------
 
@@ -234,6 +250,10 @@ class CarFlow:
                 self._on_exit_in(car, when)
             elif direction == "CarOut":
                 logger.info("%s left through %s", plate, spot_name)
+
+                # Car has passed through the exit, close the exit gate
+                self._close_gates(EXIT_GATES, f"{plate} has left")
+
                 self._db("complete_session", car["session_id"], when)
                 del self.cars[plate]
             return
@@ -319,7 +339,6 @@ class CarFlow:
         if car["stage"] in (CHARGING, DONE):
             return  # duplicate; never charge twice
         car["stage"] = AT_EXIT
-        self._open_gates(EXIT_GATES, f"letting {car['plate']} out")
         self._charge(car)
 
     def _billing_period(self, car):
@@ -367,17 +386,75 @@ class CarFlow:
         if get_post_payment_action(True) == "ALLOW_DEPARTURE":
             self._leavepark(car)
 
+        # ADD THE NEW FUNCTION HERE
+    def _on_gate_action(self, event):
+        gate_name = event.get("Name")
+        action = event.get("Action")
+
+        if gate_name not in EXIT_GATES or action != "Open":
+            return
+
+        for car in self.cars.values():
+            if car["paid"] and not car["leavepark_sent"]:
+                logger.info(
+                    "%s: exit gate is now open, sending car to leavepark",
+                    car["plate"]
+                )
+
+                try:
+                    self.client.move_car(car["plate"], "leavepark")
+                except SimulatorError as e:
+                    logger.error(
+                        "move_car(%s, leavepark) failed: %s",
+                        car["plate"],
+                        e
+                    )
+                    return
+
+                car["leavepark_sent"] = True
+                car["stage"] = DONE
+                return
+
     def _leavepark(self, car):
         if car["leavepark_sent"]:
             return
+
+        logger.info(
+            "%s paid. Opening exit gate and waiting for it to open.",
+            car["plate"]
+        )
+
+        # Open the gate ONLY.
+        # Do not move the car yet.
+        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
+
+        logger.warning(
+            "ABOUT TO LEAVE: %s | paid=%s | stage=%s",
+            car["plate"],
+            car["paid"],
+            car["stage"]
+        )
+
+        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
+
         try:
             self.client.move_car(car["plate"], "leavepark")
+
+            logger.warning(
+                "LEAVEPARK COMMAND SUCCESS: %s",
+                car["plate"]
+            )
+
         except SimulatorError as e:
-            logger.error("move_car(%s, leavepark) failed: %s", car["plate"], e)
-            return  # paid but not sent, retried on the next event
+            logger.error(
+                "LEAVEPARK COMMAND FAILED: %s | %s",
+                car["plate"],
+                e
+            )
+            return
+
         car["leavepark_sent"] = True
         car["stage"] = DONE
-        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
 
     # ---- retries ----------------------------------------------------------
 
