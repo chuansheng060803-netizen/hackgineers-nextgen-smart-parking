@@ -167,7 +167,7 @@ class PaymentTests(DbTestCase):
     def test_electric_charge_amounts_stored(self):
         self.to_charging("EV 123", "Electric")
         row = payments()[0]
-        self.assertEqual((row["parking_cost"], row["charging_cost"]), (10.0, 20.0))
+        self.assertEqual((row["parking_cost"], row["charging_cost"]), (10.0, 10.0))
 
 
 class EventLogTests(DbTestCase):

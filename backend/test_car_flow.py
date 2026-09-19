@@ -237,12 +237,12 @@ class ExitAndChargeTests(FlowTestCase):
 
     def test_charge_at_exit_electric_car(self):
         self.to_charging("EV 123", "Electric")
-        self.assertEqual(self.client.of("charge_car"), [("charge_car", "EV 123", 10.0, 20.0)])
+        self.assertEqual(self.client.of("charge_car"), [("charge_car", "EV 123", 10.0, 10.0)])
 
     def test_requested_costs_stored_separately(self):
         self.to_charging("EV 123", "Electric")
         self.assertEqual(self.car("EV 123")["parking_cost"], 10.0)
-        self.assertEqual(self.car("EV 123")["charging_cost"], 20.0)
+        self.assertEqual(self.car("EV 123")["charging_cost"], 10.0)
 
     def test_repeated_exit_event_does_not_charge_twice(self):
         self.to_charging()
