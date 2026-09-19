@@ -138,12 +138,18 @@ def gates_block(gates, fans):
             pills += _pill("Broken", "crit", ICON["x"])
         elif health == "maintenance":
             pills += _pill("In repair", "warn", ICON["wrench"])
+        if g.get("manual"):
+            pills += _pill("Manual", "warn")
         role = g.get("role") or (g.get("zone") or "gate")
         rows.append(f'<div class="pk-row"><div><span class="nm">{e(g["name"])}</span> <span class="role">{e(role)}'
                     f'{(" · " + e(g["zone"])) if g.get("zone") else ""}</span></div><div class="right">{pills}</div></div>')
     for f in fans:
         health = f.get("health", "ok")
-        pills = _pill("Running" if f.get("on") else "Off", "good" if f.get("on") else "")
+        speed = f.get("speed") or ("normal" if f.get("on") else "off")
+        pills = _pill({"turbo": "Turbo", "normal": "Running", "off": "Off"}.get(speed, "Running"),
+                      {"turbo": "warn", "normal": "good", "off": ""}.get(speed, "good"))
+        if f.get("manual"):
+            pills += _pill("Manual", "warn")
         if health == "broken":
             pills += _pill("Broken", "crit", ICON["x"])
         elif health == "maintenance":
@@ -152,6 +158,21 @@ def gates_block(gates, fans):
                     f'<div class="right">{pills}</div></div>')
     body = "".join(rows) or '<div class="pk-empty">No components reported yet.</div>'
     return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">Gates and fans</span></div>{body}</div></div>'
+
+
+def system_block(source, ok, updated, spots, gates, fans, alerts):
+    parts = list(gates) + list(fans)
+    bad = [c for c in parts if c.get("health", "ok") != "ok"]
+    crit = sum(1 for a in alerts if a.get("severity") == "critical")
+    conn = _pill("Online", "good") if ok else _pill("Not answering", "crit", ICON["x"])
+    comp = _pill(f"{len(parts) - len(bad)} of {len(parts)} working", "good" if not bad else "crit" if any(c.get("health") == "broken" for c in bad) else "warn")
+    broken_spots = sum(1 for p in spots if p.get("state") in ("broken", "maintenance"))
+    spot_pill = _pill("All working" if not broken_spots else f"{broken_spots} out of service", "good" if not broken_spots else "warn")
+    al = _pill("None" if not alerts else f"{len(alerts)} active" + (f" ({crit} critical)" if crit else ""), "good" if not alerts else "crit" if crit else "warn")
+    rows = [("Data source", _pill(source)), ("Connection", conn), ("Last update", _pill(updated or "-")),
+            ("Gates and fans", comp), ("Parking spots", spot_pill), ("Alerts", al)]
+    body = "".join(f'<div class="pk-row"><span class="nm">{e(k)}</span><div class="right">{v}</div></div>' for k, v in rows)
+    return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">System status</span></div>{body}</div></div>'
 
 
 def co_block(zones, scale=150.0):
