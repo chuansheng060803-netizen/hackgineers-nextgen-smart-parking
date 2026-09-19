@@ -77,13 +77,24 @@ def _parse_time(event):
 
 
 class CarFlow:
-    def __init__(self, client, amount_check=amount_is_valid):
+    def __init__(self, client, amount_check=amount_is_valid, db=None):
         self.client = client
         self.amount_check = amount_check
+        self.db = db  # optional DatabaseAdapter; None = no persistence
         self.cars = {}  # plate -> state dict
         self._seen_event_ids = set()
         self._last_sequence_id = None
         self._lock = threading.RLock()
+
+    def _db(self, method, *args):
+        """Call a database adapter method; a database failure never breaks the flow."""
+        if self.db is None:
+            return None
+        try:
+            return getattr(self.db, method)(*args)
+        except Exception:
+            logger.exception("Database %s failed", method)
+            return None
 
     # ---- public API -------------------------------------------------------
 
@@ -92,6 +103,7 @@ class CarFlow:
         with self._lock:
             if not self._accept(event):
                 return
+            self._db("log_event", event)
             event_class = event.get("EventClass")
             if event_class == "car_spot_action":
                 self._on_car_spot_action(event)
@@ -160,6 +172,7 @@ class CarFlow:
                 self._on_exit_in(car, when)
             elif direction == "CarOut":
                 logger.info("%s left through %s", plate, spot_name)
+                self._db("complete_session", car["session_id"], when)
                 del self.cars[plate]
             return
 
@@ -172,8 +185,11 @@ class CarFlow:
             car["parked_in_time"] = when
             if car["stage"] in (MOVING, WAITING):
                 car["stage"] = PARKED
+            self._db("mark_parked", car["session_id"], when)
+            self._db("set_spot_occupied", spot_name, plate)
         elif direction == "CarOut":
             car["parked_out_time"] = when  # also releases the reservation
+            self._db("set_spot_available", spot_name)
 
     def _on_entry_in(self, plate, event, when):
         if plate in self.cars:
@@ -193,8 +209,11 @@ class CarFlow:
             "charging_cost": None,
             "paid": False,
             "leavepark_sent": False,
+            "session_id": None,     # database session
+            "payment_id": None,     # database payment row
         }
         self.cars[plate] = car
+        car["session_id"] = self._db("start_session", plate, car["car_type"], when)
         self._allocate(car)
 
     def _allocate(self, car):
@@ -218,6 +237,7 @@ class CarFlow:
             return
         car["spot"] = spot["name"]
         car["stage"] = MOVING
+        self._db("assign_spot", car["session_id"], spot["name"])
 
     def _on_exit_in(self, car, when):
         car["exit_in_time"] = when
@@ -252,6 +272,10 @@ class CarFlow:
         car["parking_cost"] = charges["parkingCost"]
         car["charging_cost"] = charges["chargingCost"]
         car["stage"] = CHARGING
+        car["payment_id"] = self._db(
+            "record_pending_charge",
+            car["session_id"], charges["parkingCost"], charges["chargingCost"],
+        )
 
     # ---- payment_made -----------------------------------------------------
 
@@ -262,6 +286,8 @@ class CarFlow:
                            get_post_payment_action(False), event)
             return
         car["paid"] = True
+        if car["payment_id"] is not None:
+            self._db("mark_payment_paid", car["payment_id"])
         if get_post_payment_action(True) == "ALLOW_DEPARTURE":
             self._leavepark(car)
 

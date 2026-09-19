@@ -39,6 +39,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--live", action="store_true", help="really send commands")
     parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--db", action="store_true",
+                        help="record sessions, payments and events in the SQLite database")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -50,7 +52,18 @@ if __name__ == "__main__":
         logger.info("DRY RUN: commands are only logged (use --live to send)")
         client = DryRunClient(client)
 
-    flow = CarFlow(client)
+    db = None
+    if args.db:
+        from database_adapter import DatabaseAdapter
+
+        db = DatabaseAdapter()
+        db.initialize()
+        try:
+            db.sync(client)  # read-only: list_parking_spots()
+        except Exception:
+            logger.exception("Initial database sync failed; continuing")
+
+    flow = CarFlow(client, db=db)
     webhook.register_handler(log_event)
     webhook.register_handler(flow.handle_event)
     webhook.run(port=args.port)
