@@ -154,6 +154,8 @@ class CarFlow:
                 self._on_payment_made(event)
             elif event_class == "penalty":
                 self._on_penalty(event)
+            elif event_class == "gate_action":
+                self._on_gate_action(event)
             self._retry_pending(skip=event.get("CarPlateNumber"))
 
     def request_exit(self, plate):
@@ -173,6 +175,14 @@ class CarFlow:
             return True
 
     # ---- barrier gates ----------------------------------------------------
+
+    def _on_gate_action(self, event):
+        """Persist gate events without changing car movement or gate recovery."""
+        gate_name = event.get("Name")
+        action = event.get("Action")
+        when = _parse_time(event)
+        if gate_name and action:
+            self._db("update_gate_status", gate_name, action, when)
 
     def _gate_is_ok(self, name):
         """True only if this barrier is known to be healthy.
@@ -358,6 +368,7 @@ class CarFlow:
                 # If another already-paid car is still being released, closing
                 # gateB here races that car's open command and can strand it.
                 session_id = car["session_id"]
+                payment_id = car["payment_id"]
                 del self.cars[plate]
                 other_paid_exit = any(
                     (
@@ -373,7 +384,9 @@ class CarFlow:
                     )
                 else:
                     self._close_gates(EXIT_GATES, f"{plate} cleared the exit")
-                self._db("complete_session", session_id, when)
+                self._db("complete_session", session_id, spot_name, when)
+                if payment_id is not None:
+                    self._db("complete_payment", payment_id, when)
             return
 
         # Anything else is a parking spot: only our reserved spot matters.
@@ -389,11 +402,12 @@ class CarFlow:
             car["parked_in_time"] = when
             if car["stage"] in (MOVING, WAITING):
                 car["stage"] = PARKED
-            self._db("mark_parked", car["session_id"], when)
-            self._db("set_spot_occupied", spot_name, plate)
+            self._db("start_parking", car["session_id"], spot_name, when)
+            self._db("set_spot_occupied", spot_name, plate, when)
         elif direction == "CarOut":
             car["parked_out_time"] = when  # also releases the reservation
-            self._db("set_spot_available", spot_name)
+            self._db("end_parking", car["session_id"], when)
+            self._db("set_spot_available", spot_name, when)
 
             # Do NOT normally charge on Park/CarOut. The car is still on the road.
             # The only exception is the S30-style geometry case where EXIT_EXIT
@@ -446,7 +460,9 @@ class CarFlow:
             "exit_release_last_open_at": None,
         }
         self.cars[plate] = car
-        car["session_id"] = self._db("start_session", plate, car["car_type"], when)
+        car["session_id"] = self._db(
+            "start_session", plate, car["car_type"], event.get("SpotName"), when
+        )
         self._allocate(car)
 
     def _on_entry_out(self, plate):
@@ -527,7 +543,6 @@ class CarFlow:
             return
         car["spot"] = spot["name"]
         car["stage"] = MOVING
-        self._db("assign_spot", car["session_id"], spot["name"])
         # The simulator may let several queued cars cross ENTRY1 during one
         # physical gate opening. Track all cars that were actually commanded
         # through the open barrier and close it when the batch clears.
@@ -613,7 +628,6 @@ class CarFlow:
                 logger.warning("Entry retry reassigned %s from %s to %s",
                                plate, destination, new_destination)
                 car["spot"] = new_destination
-                self._db("assign_spot", car["session_id"], new_destination)
 
             car["entry_retry_count"] = car.get("entry_retry_count", 0) + 1
             logger.warning("Retried entry move for %s -> %s (%s/%s)",
@@ -820,6 +834,7 @@ class CarFlow:
     # ---- payment_made -----------------------------------------------------
 
     def _on_payment_made(self, event):
+        when = _parse_time(event)
         car = self.cars.get(event.get("CarPlateNumber"))
         if not validate_payment(event, car, self.amount_check):
             logger.warning("Payment rejected (%s): %s",
@@ -827,7 +842,7 @@ class CarFlow:
             return
         car["paid"] = True
         if car["payment_id"] is not None:
-            self._db("mark_payment_paid", car["payment_id"])
+            self._db("mark_payment_paid", car["payment_id"], when)
 
         if get_post_payment_action(True) != "ALLOW_DEPARTURE":
             return
