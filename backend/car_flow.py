@@ -13,7 +13,6 @@ import os
 import threading
 import time
 from datetime import datetime
-from tkinter.font import names
 
 from parking_algorithm import select_parking_spot
 from payment_logic import get_post_payment_action, process_payment
@@ -37,6 +36,8 @@ TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 ENTRY_GATES = [g.strip() for g in os.getenv("ENTRY_GATES", "gateA").split(",") if g.strip()]
 EXIT_GATES = [g.strip() for g in os.getenv("EXIT_GATES", "gateB").split(",") if g.strip()]
 GATE_HEALTH_CACHE_S = 3.0    # don't re-read barrier health for every single car
+ENTRY_MOVE_RETRY_S = 2.5       # one recovery retry if ENTRY1 CarOut never arrives
+ENTRY_MOVE_MAX_RETRIES = 1
 
 
 def verify_signature(event):
@@ -138,8 +139,6 @@ class CarFlow:
                 self._on_car_spot_action(event)
             elif event_class == "payment_made":
                 self._on_payment_made(event)
-            elif event_class == "gate_action":
-                self._on_gate_action(event)
             self._retry_pending(skip=event.get("CarPlateNumber"))
 
     def request_exit(self, plate):
@@ -181,29 +180,76 @@ class CarFlow:
         return False
 
     def _open_gates(self, names, why):
-        """Raise the barriers a car needs to pass."""
+        """Raise healthy barriers.
+
+        Returns True when at least one requested gate was opened and none failed,
+        False when an actual open command failed, and None when health was unknown
+        so no gate command was attempted.  The None case preserves the existing
+        dry-run/test behaviour while live Level 1 has a real barrier list.
+        """
+        attempted = False
+        failed = False
         for name in names:
             if not self._gate_is_ok(name):
                 continue
-
+            attempted = True
             try:
                 self.client.open_gate(name)
                 logger.info("Opened %s (%s)", name, why)
             except (SimulatorError, AttributeError) as e:
+                failed = True
                 logger.error("open_gate(%s) failed: %s", name, e)
-
+        if failed:
+            return False
+        if attempted:
+            return True
+        return None
 
     def _close_gates(self, names, why):
-        """Close the specified barriers."""
+        """Close healthy barriers without letting a gate failure break car flow."""
         for name in names:
             if not self._gate_is_ok(name):
                 continue
-
             try:
                 self.client.close_gate(name)
                 logger.info("Closed %s (%s)", name, why)
             except (SimulatorError, AttributeError) as e:
                 logger.error("close_gate(%s) failed: %s", name, e)
+
+    def _wait_for_gate_state(self, name, expected, timeout=2.0, poll=0.05):
+        """Wait briefly for the simulator to report a barrier state.
+
+        The live simulator acknowledges open_gate before the physical barrier has
+        finished opening. Sending goto in that small window can leave the first
+        car idle at ENTRY1. Polling the read-only barrier list avoids guessing a
+        fixed sleep and only delays while the barrier is actually moving.
+        """
+        deadline = time.monotonic() + timeout
+        expected = expected.lower()
+        while time.monotonic() < deadline:
+            try:
+                barriers = self.client.list_barriers() or []
+            except (SimulatorError, AttributeError) as e:
+                logger.warning("Cannot confirm %s state for %s: %s", name, expected, e)
+                return False
+            now = time.monotonic()
+            self._barriers = barriers
+            self._barriers_at = now
+            for barrier in barriers:
+                if not isinstance(barrier, dict) or barrier.get("name") != name:
+                    continue
+                state = str(barrier.get("state", "")).lower()
+                if state == expected:
+                    return True
+                break
+            time.sleep(poll)
+        logger.warning("Timed out waiting for %s to become %s", name, expected)
+        return False
+
+    def initialize_entry_gate(self):
+        """Put the Level 1 entry barrier in its normal CLOSED state at startup."""
+        self._close_gates(ENTRY_GATES, "entry controller startup")
+
 
     # ---- event gate -------------------------------------------------------
 
@@ -238,7 +284,15 @@ class CarFlow:
         if spot_type == "EntrySpot":
             if direction == "CarIn":
                 self._on_entry_in(plate, event, when)
+            elif direction == "CarOut":
+                self._on_entry_out(plate)
             return
+
+        # Any parking-bay occupancy change makes the cached simulator snapshot
+        # stale immediately.  Invalidate even for an unknown car so a restart or
+        # reordered event cannot leave us assigning from an outdated spot list.
+        if spot_type == "Park":
+            self._invalidate_spot_cache()
 
         car = self.cars.get(plate)
         if car is None:
@@ -250,10 +304,6 @@ class CarFlow:
                 self._on_exit_in(car, when)
             elif direction == "CarOut":
                 logger.info("%s left through %s", plate, spot_name)
-
-                # Car has passed through the exit, close the exit gate
-                self._close_gates(EXIT_GATES, f"{plate} has left")
-
                 self._db("complete_session", car["session_id"], when)
                 del self.cars[plate]
             return
@@ -264,6 +314,10 @@ class CarFlow:
                            direction, spot_name, plate, car["spot"])
             return
         if direction == "CarIn":
+            # Reaching a parking bay proves the car has cleared the entrance,
+            # even if the simulator omitted or reordered ENTRY1/CarOut.
+            car["entering"] = False
+            car["entry_admitted_at"] = None
             car["parked_in_time"] = when
             if car["stage"] in (MOVING, WAITING):
                 car["stage"] = PARKED
@@ -293,10 +347,31 @@ class CarFlow:
             "leavepark_sent": False,
             "session_id": None,     # database session
             "payment_id": None,     # database payment row
+            "entering": False,       # gateA is open for this car until ENTRY1 CarOut
+            "entry_admitted_at": None,
+            "entry_retry_count": 0,
         }
         self.cars[plate] = car
         car["session_id"] = self._db("start_session", plate, car["car_type"], when)
         self._allocate(car)
+
+    def _on_entry_out(self, plate):
+        """Mark one admitted car as through and close gateA when the batch is clear.
+
+        The simulator can let several queued cars cross ENTRY1 while gateA is
+        physically open.  Every accepted car therefore gets its destination
+        immediately; we only close the barrier once all accepted cars that are
+        still waiting for their own ENTRY1/CarOut have passed.
+        """
+        car = self.cars.get(plate)
+        if car is None or not car.get("entering"):
+            return
+        car["entering"] = False
+        car["entry_admitted_at"] = None
+        if any(c.get("entering") for c in self.cars.values()):
+            logger.info("%s passed entry; gateA stays open for other admitted cars", plate)
+            return
+        self._close_gates(ENTRY_GATES, f"{plate} cleared the admitted entry batch")
 
     def _parking_spots(self):
         """The spot list, optionally reused for spots_cache_s seconds. Our own
@@ -309,6 +384,11 @@ class CarFlow:
         self._spots = self.client.list_parking_spots()
         self._spots_at = now
         return self._spots
+
+    def _invalidate_spot_cache(self):
+        """Force the next allocation/recovery to read fresh spot occupancy."""
+        self._spots = None
+        self._spots_at = None
 
     def _allocate(self, car):
         try:
@@ -324,21 +404,134 @@ class CarFlow:
         if spot is None:
             logger.info("No free spot for %s; waiting", car["plate"])
             return
+        # Live Level 1 behaviour is order-sensitive: cars can sit at ENTRY1 if
+        # goto is sent while gateA is still closed.  Open the entry barrier first,
+        # then issue the movement command.
+        gate_opened = self._open_gates(ENTRY_GATES, f"letting {car['plate']} in")
+        if gate_opened is False:
+            logger.warning("%s waits: entry gate open command failed", car["plate"])
+            return
+        # In live mode, wait until the simulator reports the barrier as Open
+        # before issuing goto.  Otherwise the first car can receive goto while
+        # gateA is still physically moving and remain idle at ENTRY1.
+        if gate_opened is True:
+            for gate_name in ENTRY_GATES:
+                if not self._wait_for_gate_state(gate_name, "Open"):
+                    logger.warning("%s waits: %s did not become Open",
+                                   car["plate"], gate_name)
+                    self._close_gates(ENTRY_GATES,
+                                      f"entry gate not ready for {car['plate']}")
+                    return
         try:
             self.client.move_car(car["plate"], spot["name"])
         except SimulatorError as e:
             logger.error("move_car(%s, %s) failed: %s", car["plate"], spot["name"], e)
+            # If nobody else is currently crossing, restore the normal closed
+            # state after a failed movement command.
+            if not any(c.get("entering") for c in self.cars.values()):
+                self._close_gates(ENTRY_GATES, f"move failed for {car['plate']}")
             return
         car["spot"] = spot["name"]
         car["stage"] = MOVING
         self._db("assign_spot", car["session_id"], spot["name"])
-        self._open_gates(ENTRY_GATES, f"letting {car['plate']} in")
+        # The simulator may let several queued cars cross ENTRY1 during one
+        # physical gate opening. Track all cars that were actually commanded
+        # through the open barrier and close it when the batch clears.
+        car["entering"] = True
+        car["entry_admitted_at"] = time.monotonic()
+        car["entry_retry_count"] = 0
+        logger.info("Sent %s to %s after entry gate confirmed Open",
+                    car["plate"], spot["name"])
+        self._schedule_entry_retry(car["plate"], spot["name"])
+
+    def _schedule_entry_retry(self, plate, destination):
+        """Schedule one non-blocking recovery attempt for a rare stuck entry car."""
+        timer = threading.Timer(ENTRY_MOVE_RETRY_S, self._retry_entry_move,
+                                args=(plate, destination))
+        timer.daemon = True
+        timer.start()
+
+    def _retry_entry_move(self, plate, destination):
+        """Retry goto once if a commanded car never clears ENTRY1.
+
+        Refresh the simulator spot list first.  If the originally assigned bay
+        became occupied in the meantime, choose a different compatible free bay
+        instead of repeating the same invalid destination.  Recovery remains
+        finite: each car gets at most ENTRY_MOVE_MAX_RETRIES attempts.
+        """
+        with self._lock:
+            car = self.cars.get(plate)
+            if car is None:
+                return
+            if car.get("stage") != MOVING or not car.get("entering"):
+                return
+            if car.get("spot") != destination:
+                return
+            if car.get("entry_retry_count", 0) >= ENTRY_MOVE_MAX_RETRIES:
+                return
+
+            # Occupancy may have changed after the original allocation.  Always
+            # refresh before retrying so we do not resend a car to a bay that is
+            # now occupied.
+            self._invalidate_spot_cache()
+            try:
+                spots = self._parking_spots()
+            except SimulatorError as e:
+                logger.error("Entry retry could not refresh parking spots for %s: %s",
+                             plate, e)
+                return
+
+            reserved = {
+                c["spot"]
+                for c in self.cars.values()
+                if c.get("plate") != plate
+                and c.get("spot")
+                and c.get("parked_out_time") is None
+            }
+            free = [s for s in spots if s.get("name") not in reserved]
+            spot = select_parking_spot({"CarType": car["car_type"]}, free)
+            if spot is None:
+                logger.warning("Entry retry for %s: no free compatible spot", plate)
+                return
+            new_destination = spot["name"]
+
+            # Make sure the barrier is still physically open before retrying goto.
+            gate_opened = self._open_gates(ENTRY_GATES,
+                                           f"recovering stuck entry car {plate}")
+            if gate_opened is False:
+                logger.warning("Entry retry for %s skipped: gate open failed", plate)
+                return
+            if gate_opened is True:
+                for gate_name in ENTRY_GATES:
+                    if not self._wait_for_gate_state(gate_name, "Open"):
+                        logger.warning("Entry retry for %s skipped: %s not Open",
+                                       plate, gate_name)
+                        return
+
+            try:
+                self.client.move_car(plate, new_destination)
+            except SimulatorError as e:
+                logger.error("entry retry move_car(%s, %s) failed: %s",
+                             plate, new_destination, e)
+                return
+
+            if new_destination != destination:
+                logger.warning("Entry retry reassigned %s from %s to %s",
+                               plate, destination, new_destination)
+                car["spot"] = new_destination
+                self._db("assign_spot", car["session_id"], new_destination)
+
+            car["entry_retry_count"] = car.get("entry_retry_count", 0) + 1
+            logger.warning("Retried entry move for %s -> %s (%s/%s)",
+                           plate, new_destination, car["entry_retry_count"],
+                           ENTRY_MOVE_MAX_RETRIES)
 
     def _on_exit_in(self, car, when):
         car["exit_in_time"] = when
         if car["stage"] in (CHARGING, DONE):
             return  # duplicate; never charge twice
         car["stage"] = AT_EXIT
+        self._open_gates(EXIT_GATES, f"letting {car['plate']} out")
         self._charge(car)
 
     def _billing_period(self, car):
@@ -386,75 +579,17 @@ class CarFlow:
         if get_post_payment_action(True) == "ALLOW_DEPARTURE":
             self._leavepark(car)
 
-        # ADD THE NEW FUNCTION HERE
-    def _on_gate_action(self, event):
-        gate_name = event.get("Name")
-        action = event.get("Action")
-
-        if gate_name not in EXIT_GATES or action != "Open":
-            return
-
-        for car in self.cars.values():
-            if car["paid"] and not car["leavepark_sent"]:
-                logger.info(
-                    "%s: exit gate is now open, sending car to leavepark",
-                    car["plate"]
-                )
-
-                try:
-                    self.client.move_car(car["plate"], "leavepark")
-                except SimulatorError as e:
-                    logger.error(
-                        "move_car(%s, leavepark) failed: %s",
-                        car["plate"],
-                        e
-                    )
-                    return
-
-                car["leavepark_sent"] = True
-                car["stage"] = DONE
-                return
-
     def _leavepark(self, car):
         if car["leavepark_sent"]:
             return
-
-        logger.info(
-            "%s paid. Opening exit gate and waiting for it to open.",
-            car["plate"]
-        )
-
-        # Open the gate ONLY.
-        # Do not move the car yet.
-        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
-
-        logger.warning(
-            "ABOUT TO LEAVE: %s | paid=%s | stage=%s",
-            car["plate"],
-            car["paid"],
-            car["stage"]
-        )
-
-        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
-
         try:
             self.client.move_car(car["plate"], "leavepark")
-
-            logger.warning(
-                "LEAVEPARK COMMAND SUCCESS: %s",
-                car["plate"]
-            )
-
         except SimulatorError as e:
-            logger.error(
-                "LEAVEPARK COMMAND FAILED: %s | %s",
-                car["plate"],
-                e
-            )
-            return
-
+            logger.error("move_car(%s, leavepark) failed: %s", car["plate"], e)
+            return  # paid but not sent, retried on the next event
         car["leavepark_sent"] = True
         car["stage"] = DONE
+        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
 
     # ---- retries ----------------------------------------------------------
 

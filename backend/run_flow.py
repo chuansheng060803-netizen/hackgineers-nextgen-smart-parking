@@ -82,6 +82,10 @@ if __name__ == "__main__":
             logger.exception("Initial database sync failed; continuing")
 
     flow = CarFlow(client, db=db, spots_cache_s=2.0)
+    # Entry policy: gateA is normally closed. Establish that state before
+    # webhook traffic is accepted. Accepted cars get destinations immediately;
+    # gateA closes again once the current admitted batch has crossed ENTRY1.
+    flow.initialize_entry_gate()
 
     # Dashboard: serves /api/snapshot, /api/history and /api/control on this same
     # port, so `streamlit run dashboard/app.py` with DASHBOARD_SOURCE=api shows

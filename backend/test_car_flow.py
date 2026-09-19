@@ -127,7 +127,7 @@ class ParkingTests(FlowTestCase):
         self.assertEqual(self.client.calls, [("move_car", PLATE, "S1")])
         self.assertEqual(self.car()["stage"], car_flow.MOVING)
 
-    def test_second_car_gets_different_spot_before_first_parks(self):
+    def test_second_car_gets_different_spot_before_first_passes_entry(self):
         self.client.spots = [spot("S1"), spot("S2")]
         self.enter("AAA 111")
         self.enter("BBB 222")
