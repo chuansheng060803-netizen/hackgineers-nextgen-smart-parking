@@ -61,8 +61,9 @@ class DbTestCase(FlowTestCase):
         self.client.spots = [spot("S1"), spot("S2")]
         self.flow = CarFlow(self.client, db=self.adapter)
 
-    def use_valid_payments(self):
-        self.flow = CarFlow(self.client, amount_check=lambda event, car: True, db=self.adapter)
+    def use_rejecting_amount_check(self):
+        """A CarFlow whose amount check rejects every payment (the default accepts them)."""
+        self.flow = CarFlow(self.client, amount_check=lambda event, car: False, db=self.adapter)
 
     def session(self):
         return service.get_parking_session(self.car()["session_id"])
@@ -115,7 +116,6 @@ class SessionTests(DbTestCase):
         self.assertEqual((s1["status"], s1["current_car"], s1["zone"]), ("available", None, "ZONE1"))
 
     def test_exit_completes_session(self):
-        self.use_valid_payments()
         self.to_charging()
         self.payment()
         self.assertEqual(self.session()["status"], "active")  # leavepark sent, not gone yet
@@ -137,13 +137,35 @@ class PaymentTests(DbTestCase):
         self.assertEqual((rows[0]["parking_cost"], rows[0]["charging_cost"]), (10.0, 0))
         self.assertEqual((rows[0]["status"], rows[0]["paid_at"]), ("pending", None))
 
-    def test_payment_stays_pending_with_default_amount_check(self):
+    def test_payment_stays_pending_when_the_amount_check_rejects_it(self):
+        self.use_rejecting_amount_check()
         self.to_charging()
         self.payment()
         self.assertEqual(payments()[0]["status"], "pending")
 
+    def test_successful_payment_lifecycle_is_recorded(self):
+        # ExitSpot CarIn -> charge_car -> payment_made -> leavepark -> session completed
+        self.enter()
+        self.park_in()
+        self.park_out()
+        self.reach_exit()
+        self.assertEqual([p["status"] for p in payments()], ["pending"])
+        self.assertEqual(self.session()["status"], "active")
+
+        self.payment()
+        rows = payments()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "paid")
+        self.assertIsNotNone(rows[0]["paid_at"])
+        self.assertIn(("move_car", PLATE, "leavepark"), self.client.calls)
+        session_id = self.car()["session_id"]
+
+        self.leave_exit()
+        session = service.get_parking_session(session_id)
+        self.assertEqual((session["status"], session["departure_time"]), ("completed", "2026-09-19T14:10:00"))
+        self.assertEqual([p["status"] for p in payments()], ["paid"])
+
     def test_valid_payment_marks_paid_once(self):
-        self.use_valid_payments()
         self.to_charging()
         self.payment()
         self.payment()  # repeated payment_made
@@ -153,12 +175,10 @@ class PaymentTests(DbTestCase):
         self.assertIsNotNone(rows[0]["paid_at"])
 
     def test_payment_for_unknown_car_changes_nothing(self):
-        self.use_valid_payments()
         self.payment("ZZZ 999")
         self.assertEqual(payments(), [])
 
     def test_payment_before_charge_changes_nothing(self):
-        self.use_valid_payments()
         self.enter()
         self.park_in()
         self.payment()

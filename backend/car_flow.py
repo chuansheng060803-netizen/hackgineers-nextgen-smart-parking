@@ -46,12 +46,16 @@ def verify_signature(event):
 def amount_is_valid(event, car):
     """Is payment_made.Amount the amount we expect for this car?
 
-    NOT IMPLEMENTED on purpose: what Amount represents is not confirmed, so
-    this fails closed (no payment is accepted, leavepark is never sent).
-    The requested amounts are stored as car["parking_cost"] and
-    car["charging_cost"] for when this is decided.
+    Amount is deliberately NOT checked: the simulator's Amount semantics are
+    undocumented and no conversion is invented. A payment is therefore accepted
+    on the conditions in validate_payment() alone (known car, CHARGING stage,
+    not already paid). The requested amounts are stored as car["parking_cost"]
+    and car["charging_cost"] so a real Amount rule can be added here later, or
+    injected through CarFlow(amount_check=...).
     """
-    return False
+    logger.info("payment_made Amount %s for %s is not validated (semantics undocumented)",
+                event.get("Amount"), car["plate"])
+    return True
 
 
 def validate_payment(event, car, amount_check=amount_is_valid):

@@ -116,8 +116,9 @@ class LifecycleTests(SnapshotTestCase):
         self.assertEqual(len(snap["cars"]), 1)  # still inside, on its way out
 
     def test_pending_payment_shows_estimate_but_no_income(self):
+        self.use_rejecting_amount_check()
         self.to_charging()
-        self.payment()  # default check is fail-closed: stays pending
+        self.payment()  # rejected by the amount check: stays pending
         snap = self.snap()
         self.assertEqual(self.car_row(snap)["estimated_charge"], 10.0)
         self.assertEqual(snap["stats"]["revenue"], 0.0)
@@ -129,7 +130,6 @@ class LifecycleTests(SnapshotTestCase):
         self.assertEqual((snap["sessions"][0]["charge"], snap["stats"]["revenue"]), (10.0, 0.0))
 
     def test_paid_completed_session_appears_in_history_and_income(self):
-        self.use_valid_payments()
         self.to_charging()
         self.payment()
         self.leave_exit()
@@ -175,7 +175,6 @@ class GateTests(SnapshotTestCase):
 
 class RenderingTests(SnapshotTestCase):
     def test_snapshot_works_with_normalise_alerts_and_ui(self):
-        self.use_valid_payments()
         self.to_charging()
         self.payment()
         service.upsert_gate("gateA", state="Open")

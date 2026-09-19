@@ -251,30 +251,66 @@ class ExitAndChargeTests(FlowTestCase):
 
 
 class PaymentTests(FlowTestCase):
-    def test_payment_rejected_by_default_and_no_leavepark(self):
-        self.to_charging()
-        self.payment()
+    def test_successful_payment_lifecycle(self):
+        # ExitSpot CarIn -> charge_car -> payment_made -> leavepark, with the default checks
+        self.enter()
+        self.park_in()
+        self.park_out()
+        self.reach_exit()
+        self.assertEqual(self.car()["stage"], car_flow.CHARGING)
         self.assertFalse(self.car()["paid"])
-        self.assertNotIn(("move_car", PLATE, "leavepark"), self.client.calls)
 
-    def test_valid_payment_sends_leavepark_once(self):
-        self.flow = CarFlow(self.client, amount_check=lambda event, car: True)
-        self.to_charging()
         self.payment()
-        self.payment()  # repeated payment_made
-        self.assertEqual(self.client.calls.count(("move_car", PLATE, "leavepark")), 1)
+        self.assertTrue(self.car()["paid"])
         self.assertEqual(self.car()["stage"], car_flow.DONE)
+        self.assertEqual(self.client.calls, [
+            ("move_car", PLATE, "S1"),
+            ("charge_car", PLATE, 10.0, 0),
+            ("move_car", PLATE, "leavepark"),
+        ])
 
         self.leave_exit()
         self.assertNotIn(PLATE, self.flow.cars)
 
+    def test_payment_is_accepted_whatever_the_amount_is(self):
+        # Amount semantics are undocumented, so no Amount rule is applied.
+        for amount in (0, 10.0, 999.5):
+            with self.subTest(amount=amount):
+                self.client.calls.clear()
+                plate = f"AMT {int(amount)}"
+                self.to_charging(plate)
+                self.payment(plate, amount=amount)
+                self.assertIn(("move_car", plate, "leavepark"), self.client.calls)
+
+    def test_repeated_payment_sends_leavepark_once(self):
+        self.to_charging()
+        self.payment()
+        self.payment()  # repeated payment_made
+        self.payment()
+        self.assertEqual(self.client.calls.count(("move_car", PLATE, "leavepark")), 1)
+        self.assertEqual(len(self.client.of("charge_car")), 1)
+        self.assertEqual(self.car()["stage"], car_flow.DONE)
+
+    def test_payment_rejected_when_the_amount_check_rejects_it(self):
+        # The hook is kept: a real Amount rule can still be injected later.
+        self.flow = CarFlow(self.client, amount_check=lambda event, car: False)
+        self.to_charging()
+        self.payment()
+        self.assertFalse(self.car()["paid"])
+        self.assertEqual(self.car()["stage"], car_flow.CHARGING)
+        self.assertNotIn(("move_car", PLATE, "leavepark"), self.client.calls)
+
     def test_payment_for_unknown_car_rejected(self):
-        self.flow = CarFlow(self.client, amount_check=lambda event, car: True)
         self.payment("ZZZ 999")
         self.assertEqual(self.client.calls, [])
 
+    def test_payment_for_another_car_does_not_release_this_one(self):
+        self.to_charging()
+        self.payment("ZZZ 999")
+        self.assertFalse(self.car()["paid"])
+        self.assertNotIn(("move_car", PLATE, "leavepark"), self.client.calls)
+
     def test_payment_before_charge_rejected(self):
-        self.flow = CarFlow(self.client, amount_check=lambda event, car: True)
         self.enter()
         self.park_in()
         self.payment()
