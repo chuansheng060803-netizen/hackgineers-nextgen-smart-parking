@@ -145,7 +145,9 @@ def gates_block(gates, fans):
                     f'{(" · " + e(g["zone"])) if g.get("zone") else ""}</span></div><div class="right">{pills}</div></div>')
     for f in fans:
         health = f.get("health", "ok")
-        pills = _pill("Running" if f.get("on") else "Off", "good" if f.get("on") else "")
+        speed = f.get("speed") or ("normal" if f.get("on") else "off")
+        pills = _pill({"turbo": "Turbo", "normal": "Running", "off": "Off"}.get(speed, "Running"),
+                      {"turbo": "warn", "normal": "good", "off": ""}.get(speed, "good"))
         if f.get("manual"):
             pills += _pill("Manual", "warn")
         if health == "broken":

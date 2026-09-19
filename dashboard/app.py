@@ -113,10 +113,11 @@ def controls_card(snap, role):
             for f in snap["fans"]:
                 health = f.get("health", "ok")
                 mode = "manual" if f.get("manual") else "automatic"
-                note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(health, f" · {'running' if f.get('on') else 'off'}, {mode}")
+                speed = {"turbo": "TURBO", "normal": "running", "off": "off"}.get(f.get("speed") or ("normal" if f.get("on") else "off"), "running")
+                note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(health, f" · {speed}, {mode}")
                 st.markdown(f"**{f['name']}** {f.get('zone', '')}{note}")
                 b1, b2, b3, b4 = st.columns(4)
-                for col, label, act in [(b1, "On", "on"), (b2, "Off", "off"), (b3, "Auto", "auto")]:
+                for col, label, act in [(b1, "Turbo", "on"), (b2, "Off", "off"), (b3, "Auto", "auto")]:
                     col.button(label, key=f"c_{f['name']}_{act}", width="stretch", disabled=health != "ok",
                                on_click=do_control, args=("fan", f["name"], act, role))
                 b4.button("Repair", key=f"c_{f['name']}_repair", width="stretch", disabled=health != "broken",
@@ -149,9 +150,19 @@ with st.sidebar:
     if data_source.mode() != "api":
         st.markdown("#### Demo the challenges")
         st.caption("Mock data only. Each button forces one scenario from the brief.")
-        for label, key in [("Traffic surge", "surge"), ("CO buildup (ZONE2)", "co"), ("Entrance gate breaks", "gate"),
-                           ("Exhaust fan breaks (ZONE2)", "fan"),                            ("Rogue car", "rogue"), ("Reset demo", "reset")]:
-            st.button(label, key=f"btn_{key}", width="stretch", on_click=lambda k=key: get_world().trigger(k))
+        DEMOS = [("Traffic surge", "surge", "Traffic surge started. Watch the arrivals chart and alerts."),
+                 ("CO buildup (ZONE2)", "co", "CO is rising in ZONE2. The warning appears once it passes 50 ppm (about 15 seconds)."),
+                 ("Entrance gate breaks", "gate", "The entrance gate broke down. Cars are being turned away."),
+                 ("Exhaust fan breaks (ZONE2)", "fan", "The ZONE2 exhaust fan broke down."),
+                 ("Rogue car", "rogue", "A rogue car entered."),
+                 ("Reset demo", "reset", "Demo reset.")]
+
+        def run_demo(key, note):
+            get_world().trigger(key)
+            st.toast(note)
+
+        for label, key, note in DEMOS:
+            st.button(label, key=f"btn_{key}", width="stretch", on_click=run_demo, args=(key, note))
 
 # ------------------------------------------------------------------ main (auto-refreshing fragment)
 

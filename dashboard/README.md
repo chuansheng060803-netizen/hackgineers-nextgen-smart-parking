@@ -49,7 +49,7 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `sessions` | finished visits, newest first, for the History search: `[{plate, car_type, spot, entered_at:"2026-01-01 12:00:00", left_at, minutes, charge, status:"Completed"}]` |
 | `archive` | one summary row per day, newest first (today first), up to 30 days, for the 30-day history: `[{date:"2026-01-01", visits, cars_parked, drive_through, income, penalties, peak_pct, avg_minutes}]` |
 | `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance", manual:"open"\|"closed"\|null}]` (`manual` is optional: `null`/missing = automatic) |
-| `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance", manual:"on"\|"off"\|null}]` (`manual` is optional: `null`/missing = automatic) |
+| `fans` | `[{name, zone, on:true, speed:"normal\|turbo\|off", health:"ok\|broken\|maintenance", manual:"on"\|"off"\|null}]` (`speed` and `manual` are optional. Fans run all the time at `normal` and go `turbo` while CO builds up; `on` = running, i.e. `speed` is not `off`; `manual` `null`/missing = automatic, `"on"` = forced turbo) |
 | `zones` | `[{name:"ZONE1", co_ppm:12.3, risk:"Safe\|Mid\|High\|Critical"}]` (50 ppm and up counts as Mid) |
 | `history.occupancy` | `[{t:ISO time, occupied:int, total:int}]` |
 | `history.co` | `[{t:ISO time, zone, ppm}]` |
@@ -70,7 +70,7 @@ The sidebar has a "Signed in as" selector (Viewer, Operator, Admin). It is a **d
 from the backend. The "Manual controls" card under the parking map then offers:
 
 - Gates: **Open**, **Close**, **Auto**, **Repair**  (Open/Close hold the gate that way until **Auto** gives it back to normal operation)
-- Exhaust fans: **On**, **Off**, **Auto**, **Repair**
+- Exhaust fans: **Turbo**, **Off**, **Auto**, **Repair**  (Auto = always running, turbo automatically while CO builds up)
 
 Viewer sees the card read-only. Admin also gets a "Control log" of what was pressed.
 
@@ -83,7 +83,7 @@ reply: {"ok": true, "message": "gate0 opened."}
 ```
 
 - `name` is the gate or fan name from the snapshot (`gate0`, `fan1`, ...).
-- `action` for gates: `open` (held open), `close` (held shut, cars cannot pass), `auto` (back to normal), `repair`. For fans: `on`, `off`, `auto`, `repair`.
+- `action` for gates: `open` (held open), `close` (held shut, cars cannot pass), `auto` (back to normal), `repair`. For fans: `on` (forced turbo), `off` (stopped), `auto` (normal speed, automatic turbo), `repair`.
 - The **backend must enforce the rules**, the dashboard buttons are only a convenience:
   - `viewer` is refused (reply `{"ok": false, "message": "..."}`).
   - `repair` is only allowed if the component is `broken`; it then becomes `maintenance` until fixed.

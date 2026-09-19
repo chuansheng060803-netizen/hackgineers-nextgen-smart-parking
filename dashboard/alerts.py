@@ -22,7 +22,8 @@ def derive_alerts(s):
                 "severity": "warning" if risk == "Mid" else "critical", "kind": "CO buildup",
                 "title": f"Carbon monoxide {risk.lower()} in {z['name']}",
                 "detail": f"{z.get('co_ppm', 0):.0f} ppm (Mid starts at 50). "
-                          + (f"Exhaust fan {', '.join(fans)} is running." if fans else "No exhaust fan running here!")})
+                          + (f"Exhaust fan {', '.join(fans)} is running" + (" at turbo." if any(f.get("speed") == "turbo" for f in s.get("fans", []) if f["name"] in fans) else ".")
+                             if fans else "No exhaust fan running here!")})
 
     # Component breakdown -------------------------------------------------------
     for g in s.get("gates", []):

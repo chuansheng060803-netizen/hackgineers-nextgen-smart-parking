@@ -19,6 +19,7 @@ ZONES = ["ZONE1", "ZONE2", "ZONE3", "ZONE4", "ZONE5", "ZONE6"]
 SPOTS_PER_ZONE = 5
 STEP_S = 5.0                                   # the simulation moves in 5-second steps
 CO_MID, CO_HIGH, CO_CRITICAL = 50.0, 100.0, 200.0   # ppm; the organisers say 50 counts as "medium"
+TURBO_ON, TURBO_OFF = 40.0, 30.0    # automatic mode: fans always run, go turbo above 40 ppm, back to normal under 30
 ACCESSIBLE_SPOTS = {"S1", "S6", "S11", "S16", "S21", "S26"}      # first slot of each zone
 ELECTRIC_SPOTS = {"S5", "S10", "S15", "S20", "S25", "S30"}       # last slot of each zone
 ARRIVAL_EVERY_S = 14                          # on average one car every 14 s (busy enough to watch, not always full)
@@ -88,7 +89,7 @@ class MockWorld:
             {"name": "gate0", "zone": "", "role": "Entrance", "state": "Closed", "health": "ok", "uses": 0, "close_at": None, "manual": None},
             {"name": "gate1", "zone": "", "role": "Exit", "state": "Closed", "health": "ok", "uses": 0, "close_at": None, "manual": None},
         ]
-        self.fans = [{"name": f"fan{i}", "zone": z, "on": False, "health": "ok", "manual": None, "hours": 0.0}
+        self.fans = [{"name": f"fan{i}", "zone": z, "on": True, "speed": "normal", "health": "ok", "manual": None, "hours": 0.0}
                      for i, z in enumerate(ZONES)]
         self.co = {z: 8.0 for z in ZONES}
         self.co_extra = {z: 0.0 for z in ZONES}
@@ -234,17 +235,20 @@ class MockWorld:
                 g["state"], g["close_at"] = "Closed", None
         for f, z in zip(self.fans, ZONES):
             if f["health"] != "ok":
-                f["on"] = False
+                f["on"], f["speed"] = False, "off"
                 continue
-            if f.get("manual") == "on":                # an operator took over the fan
-                f["on"] = True
-            elif f.get("manual") == "off":
-                f["on"] = False
-            elif self.co[z] >= CO_MID and not f["on"]:
-                f["on"] = True
-                self._log("component", f"Exhaust fan {f['name']} switched on ({z})")
-            elif self.co[z] < 40 and f["on"]:
-                f["on"] = False
+            was = f.get("speed", "normal")
+            if f.get("manual") == "on":                # operator forces turbo
+                speed = "turbo"
+            elif f.get("manual") == "off":             # operator stops the fan
+                speed = "off"
+            elif self.co[z] >= TURBO_ON or (was == "turbo" and self.co[z] >= TURBO_OFF):
+                speed = "turbo"                        # automatic: always running, turbo while CO builds up
+            else:
+                speed = "normal"
+            if speed != was and f.get("manual") is None and "off" not in (speed, was):
+                self._log("component", f"Exhaust fan {f['name']} {'switched to TURBO' if speed == 'turbo' else 'back to normal speed'} ({z})")
+            f["speed"], f["on"] = speed, speed != "off"
             if f["on"]:
                 f["hours"] += STEP_S / 3600.0
 
@@ -259,18 +263,17 @@ class MockWorld:
                 parked[z] += 1
         for f, z in zip(self.fans, ZONES):
             target = 6 + 9 * moving[z] + 0.4 * parked[z]
-            if f["on"]:
-                target *= 0.55
-            target += self.co_extra[z] * (0.75 if f["on"] else 1.0)
+            k_base, k_extra = {"off": (1.0, 1.0), "normal": (0.85, 0.9), "turbo": (0.5, 0.55)}[f.get("speed", "normal")]
+            target = target * k_base + self.co_extra[z] * k_extra
             self.co[z] += (target - self.co[z]) * 0.18 + self.rng.uniform(-0.6, 0.6)
             self.co[z] = max(2.0, self.co[z])
 
     def _scenarios(self):
-        # CO buildup in ZONE2: ramps up for ~75 s, then fades
+        # CO buildup in ZONE2: passes 50 ppm after ~15 s, keeps rising for ~90 s, then fades
         if self.co_started:
             elapsed = (self.now - self.co_started).total_seconds()
-            if elapsed <= 75:
-                self.co_extra["ZONE2"] = min(140.0, elapsed * 2.4)
+            if elapsed <= 90:
+                self.co_extra["ZONE2"] = min(140.0, elapsed * 6.0)
             else:
                 self.co_extra["ZONE2"] *= 0.85
                 if self.co_extra["ZONE2"] < 3:
@@ -395,8 +398,8 @@ class MockWorld:
                 return {"ok": True, "message": f"{name} {'opened' if action == 'open' else 'closed'} by hand. Press Auto to return to normal."}
             if kind == "fan" and action in ("on", "off", "auto"):
                 comp["manual"] = None if action == "auto" else action
-                self._log("component", f"{who} set {name} to {'automatic' if action == 'auto' else action.upper()}")
-                return {"ok": True, "message": f"{name} set to {'automatic' if action == 'auto' else action}."}
+                self._log("component", f"{who} set {name} to {'automatic' if action == 'auto' else 'TURBO' if action == 'on' else 'OFF'}")
+                return {"ok": True, "message": f"{name} set to {'automatic' if action == 'auto' else 'turbo' if action == 'on' else 'off'}."}
             return {"ok": False, "message": f"'{action}' is not a valid action for a {kind}."}
 
     def history(self, date):
@@ -433,7 +436,7 @@ class MockWorld:
             elif name == "fan":
                 f = self.fans[1]
                 if f["health"] == "ok":
-                    f["health"], f["on"], f["manual"] = "broken", False, None
+                    f["health"], f["on"], f["speed"], f["manual"] = "broken", False, "off", None
                     self._log("component", f"{f['name']} (ZONE2 exhaust fan) broke down")
             elif name == "rogue":
                 candidates = [c for c in self.cars.values() if c["state"] in ("parked", "arriving") and not c["flag"]]
