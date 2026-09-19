@@ -8,6 +8,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
+import auth
 import charts
 import data_source
 import ui
@@ -71,6 +72,8 @@ def _api_history(url, date):
 def load_history(date):
     """All visits of one past day. Mock: from the fake archive. API: GET /api/history?date=..."""
     try:
+        if data_source.mode() == "db":
+            return []  # the 30-day archive is not built from the database yet
         if data_source.mode() == "api":
             return _api_history(data_source.api_url(), date)
         return get_world().history(date)
@@ -83,7 +86,9 @@ def do_control(kind, name, action, role):
     """Runs when an operator button is pressed. Mock: changes the fake car park. API: POST /api/control/..."""
     ss = st.session_state
     try:
-        if data_source.mode() == "api":
+        if data_source.mode() == "db":
+            res = {"ok": False, "message": "Manual controls are not available in database mode."}
+        elif data_source.mode() == "api":
             res = data_source.send_control(data_source.api_url(), kind, name, action, role)
         else:
             res = get_world().control(kind, name, action, role)
@@ -98,6 +103,9 @@ def do_control(kind, name, action, role):
 def controls_card(snap, role):
     with st.container(border=True):
         st.markdown(ui.card_title("Manual controls", f"signed in as {role}"), unsafe_allow_html=True)
+        if data_source.mode() == "db":
+            st.caption("Read-only in database mode: manual gate and fan controls are not connected to the simulator here.")
+            return
         if role == "Viewer":
             st.caption("Read-only. Sign in as Operator or Admin (left sidebar) to open or close gates and control the fans.")
             return
@@ -143,6 +151,8 @@ def load_snapshot():
     try:
         if data_source.mode() == "api":
             snap = data_source.fetch_api(data_source.api_url())
+        elif data_source.mode() == "db":
+            snap = data_source.fetch_db()
         else:
             snap = data_source.normalise(get_world().snapshot())
             snap["source"] = "mock"
@@ -156,11 +166,14 @@ def load_snapshot():
 with st.sidebar:
     st.markdown("### Controls")
     st.selectbox("Theme", ["Match browser", "Dark", "Light"], key="theme_choice")
-    st.selectbox("Signed in as", ["Viewer", "Operator", "Admin"], index=1, key="role")
-    st.caption("Demo sign-in. The real login comes from the database/authentication teammate.")
+    if data_source.mode() == "db":
+        auth.sidebar_login(st)
+    else:
+        st.selectbox("Signed in as", ["Viewer", "Operator", "Admin"], index=1, key="role")
+        st.caption("Demo sign-in. Use DASHBOARD_SOURCE=db for the real login.")
     st.select_slider("Refresh every (seconds)", options=[1, 2, 3, 5, 10], value=2, key="refresh_s")
     st.caption(f"Data source: **{data_source.mode()}**" + (f" ({data_source.api_url()})" if data_source.mode() == "api" else ""))
-    if data_source.mode() != "api":
+    if data_source.mode() == "mock":
         st.markdown("#### Demo the challenges")
         st.caption("Mock data only. Each button forces one scenario from the brief.")
         DEMOS = [("Traffic surge", "surge", "Traffic surge started. Watch the arrivals chart and alerts."),
@@ -176,6 +189,10 @@ with st.sidebar:
 
         for label, key, note in DEMOS:
             st.button(label, key=f"btn_{key}", width="stretch", on_click=run_demo, args=(key, note))
+
+if data_source.mode() == "db" and not st.session_state.get("role"):
+    st.info("Sign in from the sidebar to view the dashboard.")
+    st.stop()
 
 # ------------------------------------------------------------------ main (auto-refreshing fragment)
 
@@ -214,6 +231,8 @@ def board():
         if snap["zones"]:
             st.markdown(ui.co_block(snap["zones"]), unsafe_allow_html=True)
         st.markdown(ui.gates_block(snap["gates"], snap["fans"]), unsafe_allow_html=True)
+        if data_source.mode() == "db" and not snap["gates"]:
+            st.caption("Gate status: unavailable, awaiting live gate synchronisation. Fans and CO are not recorded in the database.")
 
     h = snap["history"]
     c1, c2, c3 = st.columns(3, gap="medium")

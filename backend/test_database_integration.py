@@ -137,9 +137,10 @@ class PaymentTests(DbTestCase):
         self.assertEqual((rows[0]["parking_cost"], rows[0]["charging_cost"]), (10.0, 0))
         self.assertEqual((rows[0]["status"], rows[0]["paid_at"]), ("pending", None))
 
-    def test_payment_stays_pending_with_default_amount_check(self):
+    def test_payment_stays_pending_when_the_amount_is_wrong(self):
+        # the default check compares Amount with what we billed (10.0)
         self.to_charging()
-        self.payment()
+        self.payment(amount=3.0)
         self.assertEqual(payments()[0]["status"], "pending")
 
     def test_valid_payment_marks_paid_once(self):

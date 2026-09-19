@@ -2,6 +2,7 @@
 
 DASHBOARD_SOURCE=mock  (default)  -> built-in fake car park, no backend needed
 DASHBOARD_SOURCE=api              -> GET {DASHBOARD_API_URL}/api/snapshot  (default http://localhost:8000)
+DASHBOARD_SOURCE=db               -> reads the backend's SQLite database (PARKING_DB_PATH), see db_source.py
 
 The dashboard only ever *reads*. It never talks to the simulator and never changes the backend.
 Missing keys in the backend's reply are filled with empty values so the page never crashes.
@@ -29,6 +30,11 @@ def fetch_api(url, timeout=6):
     r = requests.get(url.rstrip("/") + "/api/snapshot", timeout=timeout)
     r.raise_for_status()
     return normalise(r.json())
+
+
+def fetch_db():
+    import db_source  # imported here so mock/api modes do not need the database package
+    return normalise(db_source.fetch_db())
 
 
 def fetch_history(url, date, timeout=5):
