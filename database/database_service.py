@@ -408,6 +408,37 @@ def end_parking_session(session_id, departure_time=None):
         connection.close()
 
 
+def close_stale_sessions(departure_time=None):
+    """Complete every session still marked active and return how many there were.
+
+    Sessions are only completed when a car is seen leaving. Anything still
+    active when the backend starts belongs to a previous run: those cars are
+    long gone, and leaving them open shows them for ever as still inside.
+    """
+    if departure_time is None:
+        departure_time = _now()
+
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE parking_sessions
+            SET
+                departure_time = COALESCE(departure_time, ?),
+                status = 'completed'
+            WHERE status = 'active'
+            """,
+            (departure_time,),
+        )
+
+        connection.commit()
+        return cursor.rowcount
+
+    finally:
+        connection.close()
+
+
 def get_active_sessions():
     connection = get_connection()
 
