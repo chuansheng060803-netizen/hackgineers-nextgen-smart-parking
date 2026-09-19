@@ -437,6 +437,31 @@ def get_parking_session(session_id):
 
     finally:
         connection.close()
+
+
+def get_sessions(status=None, limit=500):
+    """Newest first. status: 'active', 'completed' or None for all."""
+    query = "SELECT * FROM parking_sessions"
+    params = []
+
+    if status is not None:
+        query += " WHERE status = ?"
+        params.append(status)
+
+    query += " ORDER BY arrival_time DESC, id DESC LIMIT ?"
+    params.append(limit)
+
+    connection = get_connection()
+
+    try:
+        rows = connection.execute(query, params).fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
 # =========================================================
 # PAYMENTS
 # =========================================================
@@ -503,6 +528,27 @@ def mark_payment_paid(payment_id, paid_at=None):
         )
 
         connection.commit()
+
+    finally:
+        connection.close()
+
+
+def get_payments(limit=2000):
+    """Newest first."""
+    connection = get_connection()
+
+    try:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM payments
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        return [dict(row) for row in rows]
 
     finally:
         connection.close()
