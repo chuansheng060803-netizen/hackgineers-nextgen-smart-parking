@@ -41,6 +41,7 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `spots` | `[{name:"S1", zone:"ZONE1", type:"Any\|Electric\|Accessible", state:"available\|reserved\|occupied\|broken\|maintenance", car:"ABC 123"\|null}]` |
 | `cars` | `[{plate, car_type, status:"Heading to spot\|Parked\|Heading to exit", spot, entered_at, minutes_inside, estimated_charge, flag:"rogue"\|null, assigned_spot}]` |
 | `events` | newest first: `[{t:"12:00:05", kind:"entry\|park\|exit\|payment\|penalty\|rogue\|refused\|component\|co\|gate", text}]` |
+| `sessions` | finished visits, newest first, for the History search: `[{plate, car_type, spot, entered_at:"2026-01-01 12:00:00", left_at, minutes, charge, status:"Completed"}]` |
 | `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance"}]` |
 | `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance"}]` |
 | `zones` | `[{name:"ZONE1", co_ppm:12.3, risk:"Safe\|Mid\|High\|Critical"}]` (50 ppm and up counts as Mid) |

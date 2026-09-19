@@ -10,7 +10,7 @@ import os
 
 import requests
 
-DEFAULTS = {"spots": [], "cars": [], "events": [], "gates": [], "fans": [], "zones": [], "penalties": [],
+DEFAULTS = {"spots": [], "cars": [], "events": [], "sessions": [], "gates": [], "fans": [], "zones": [], "penalties": [],
             "history": {"occupancy": [], "co": [], "arrivals": []},
             "stats": {"revenue": 0, "cars_served": 0, "penalty_count": 0, "penalty_total": 0, "refused_last_10min": 0}}
 

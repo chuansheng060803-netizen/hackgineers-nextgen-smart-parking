@@ -121,6 +121,31 @@ def board():
         st.markdown(ui.card_title("Recent activity", "newest first"), unsafe_allow_html=True)
         st.markdown(ui.activity_feed(snap["events"]), unsafe_allow_html=True)
 
+    with st.container(border=True):
+        st.markdown(ui.card_title("History search", "parked cars and past visits"), unsafe_allow_html=True)
+        f1, f2, f3 = st.columns([2, 1, 1])
+        q = f1.text_input("Search plate, spot or text", key="hist_q", placeholder="e.g. WBX, S12, paid").strip().lower()
+        kind = f2.selectbox("Show", ["Visits", "Events"], key="hist_kind")
+        typ = f3.selectbox("Type", ["All", "Normal", "Electric", "Accessible"], key="hist_type", disabled=kind == "Events")
+        if kind == "Visits":
+            inside = [{"plate": c["plate"], "car_type": c["car_type"], "spot": c["spot"], "entered_at": f'{(snap.get("generated_at") or "")[:10]} {c["entered_at"]}'.strip(),
+                       "left_at": "", "minutes": c["minutes_inside"], "charge": c["estimated_charge"], "status": "Inside"} for c in cars]
+            rows = inside + snap.get("sessions", [])
+            if q:
+                rows = [r for r in rows if q in " ".join(str(v) for v in r.values()).lower()]
+            if typ != "All":
+                rows = [r for r in rows if r.get("car_type") == typ]
+            cols = {"plate": "Plate", "car_type": "Type", "spot": "Spot", "entered_at": "Entered", "left_at": "Left",
+                    "minutes": "Minutes", "charge": "Charge", "status": "Status"}
+            df = pd.DataFrame(rows, columns=list(cols)).rename(columns=cols)
+        else:
+            rows = snap["events"]
+            if q:
+                rows = [r for r in rows if q in f"{r.get('kind', '')} {r.get('text', '')} {r.get('t', '')}".lower()]
+            df = pd.DataFrame(rows, columns=["t", "kind", "text"]).rename(columns={"t": "Time", "kind": "Kind", "text": "What happened"})
+        st.caption(f"{len(df)} result(s)")
+        st.dataframe(df, hide_index=True, width="stretch", height=min(380, 40 + 35 * max(len(df), 1)))
+
     with st.expander("Table view of the chart data"):
         a, b, c = st.columns(3)
         occ = pd.DataFrame(h.get("occupancy", []))

@@ -53,6 +53,7 @@ class MockWorld:
         self.events = deque(maxlen=300)
         self.penalties = deque(maxlen=300)
         self.arrivals = deque(maxlen=3000)
+        self.sessions = deque(maxlen=500)            # finished visits, newest first
         self.history_occ = deque(maxlen=900)
         self.history_co = deque(maxlen=900)
         self.revenue = 0.0
@@ -190,6 +191,11 @@ class MockWorld:
                 self._log("payment", f"{plate} paid {charge:.2f} ({minutes} min)", plate)
                 self._open_gate("gate1")
                 self._log("exit", f"{plate} left the car park", plate)
+                self.sessions.appendleft({"plate": plate, "car_type": car["type"], "spot": car["spot"],
+                                          "entered_at": car["entered"].strftime("%Y-%m-%d %H:%M:%S"),
+                                          "left_at": self.now.strftime("%Y-%m-%d %H:%M:%S"),
+                                          "minutes": round((self.now - car["entered"]).total_seconds() / 60.0, 1),
+                                          "charge": round(charge, 2), "status": "Completed"})
                 del self.cars[plate]
 
     def _gates_and_fans(self):
@@ -330,7 +336,8 @@ class MockWorld:
                 "source": "mock",
                 "spots": spots,
                 "cars": cars,
-                "events": list(self.events)[:40],
+                "events": list(self.events)[:200],
+                "sessions": list(self.sessions)[:300],
                 "gates": gates,
                 "fans": fans,
                 "zones": [{"name": z, "co_ppm": round(self.co[z], 1), "risk": co_risk(self.co[z])} for z in ZONES],
