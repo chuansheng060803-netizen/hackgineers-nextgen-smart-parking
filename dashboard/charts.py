@@ -47,22 +47,19 @@ def co_chart(history, theme):
     t = tokens(theme)
     rows = history.get("co", [])
     fig = go.Figure()
-    colours = [t["s1"], t["s2"], t["s3"]]
+    colours = [t["s1"], t["s2"], t["s3"], t["s4"], t["s5"], t["s6"]]
     zones = sorted({r["zone"] for r in rows})
     for i, z in enumerate(zones):
         pts = [r for r in rows if r["zone"] == z]
         x, y = [p["t"] for p in pts], [p["ppm"] for p in pts]
-        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=z, line=dict(color=colours[i % 3], width=2),
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=z, line=dict(color=colours[i % 6], width=2),
                                  hovertemplate="%{y:.0f} ppm<extra>" + z + "</extra>"))
-        if x:
-            fig.add_trace(go.Scatter(x=[x[-1]], y=[y[-1]], mode="markers+text", text=[z], textposition="middle right",
-                                     textfont=dict(color=t["ink2"], size=11), marker=dict(color=colours[i % 3], size=8, line=dict(color=t["surface"], width=2)),
-                                     hoverinfo="skip", showlegend=False, cliponaxis=False))
     if zones:
         fig.add_hline(y=CO_MID, line=dict(color=t["muted"], width=1, dash="dot"),
                       annotation_text="50 ppm = Mid", annotation_position="top left", annotation_font=dict(size=11, color=t["muted"]))
     _base(fig, theme, ytitle="CO (ppm)")
-    fig.update_layout(margin=dict(l=8, r=64, t=8, b=8))
+    fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.03, x=0, font=dict(size=11, color=t["ink2"])),
+                      margin=dict(l=8, r=8, t=56, b=8))
     fig.update_yaxes(rangemode="tozero")
     return fig
 
@@ -76,4 +73,19 @@ def arrivals_chart(history, theme):
                              hovertemplate="%{y} cars<extra></extra>"))
     _base(fig, theme, ytitle="cars per 5 min")
     fig.update_layout(bargap=0.35, hovermode="x")
+    return fig
+
+
+def daily_chart(days, theme):
+    """Visits per day for the last 30 days (oldest on the left, today on the right)."""
+    t = tokens(theme)
+    rows = list(reversed(days))
+    fig = go.Figure()
+    if rows:
+        fig.add_trace(go.Bar(x=[r["date"] for r in rows], y=[r["visits"] for r in rows], marker=dict(color=t["s1"], cornerradius=3),
+                             customdata=[[r["income"], r["peak_pct"]] for r in rows],
+                             hovertemplate="%{x}<br>%{y} visits<br>income %{customdata[0]:,.0f}<br>peak %{customdata[1]}% full<extra></extra>"))
+    _base(fig, theme, height=230, ytitle="visits per day")
+    fig.update_xaxes(tickformat="%d %b", nticks=10)
+    fig.update_layout(bargap=0.3, hovermode="closest")
     return fig

@@ -35,6 +35,40 @@ def detect_theme():
         return "dark"
 
 
+def today_visits(snap):
+    """Cars inside now plus everyone who already left since the dashboard started."""
+    day = (snap.get("generated_at") or "")[:10]
+    inside = [{"plate": c["plate"], "car_type": c["car_type"], "spot": c["spot"], "entered_at": f'{day} {c["entered_at"]}'.strip(),
+               "left_at": "", "minutes": c["minutes_inside"], "charge": c["estimated_charge"], "status": "Inside"} for c in snap["cars"]]
+    return inside + snap.get("sessions", [])
+
+
+def visits_table(rows, query, car_type):
+    if query:
+        rows = [r for r in rows if query in " ".join(str(v) for v in r.values()).lower()]
+    if car_type != "All":
+        rows = [r for r in rows if r.get("car_type") == car_type]
+    cols = {"plate": "Plate", "car_type": "Type", "spot": "Spot", "entered_at": "Entered", "left_at": "Left",
+            "minutes": "Minutes", "charge": "Charge", "status": "Status"}
+    return pd.DataFrame(rows, columns=list(cols)).rename(columns=cols)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _api_history(url, date):
+    return data_source.fetch_history(url, date)
+
+
+def load_history(date):
+    """All visits of one past day. Mock: from the fake archive. API: GET /api/history?date=..."""
+    try:
+        if data_source.mode() == "api":
+            return _api_history(data_source.api_url(), date)
+        return get_world().history(date)
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Could not load {date}: {exc}")
+        return []
+
+
 def load_snapshot():
     """Returns (snapshot, error_text). On failure keeps showing the last good snapshot."""
     ss = st.session_state
@@ -122,29 +156,42 @@ def board():
         st.markdown(ui.activity_feed(snap["events"]), unsafe_allow_html=True)
 
     with st.container(border=True):
-        st.markdown(ui.card_title("History search", "parked cars and past visits"), unsafe_allow_html=True)
-        f1, f2, f3 = st.columns([2, 1, 1])
-        q = f1.text_input("Search plate, spot or text", key="hist_q", placeholder="e.g. WBX, S12, paid").strip().lower()
-        kind = f2.selectbox("Show", ["Visits", "Events"], key="hist_kind")
-        typ = f3.selectbox("Type", ["All", "Normal", "Electric", "Accessible"], key="hist_type", disabled=kind == "Events")
-        if kind == "Visits":
-            inside = [{"plate": c["plate"], "car_type": c["car_type"], "spot": c["spot"], "entered_at": f'{(snap.get("generated_at") or "")[:10]} {c["entered_at"]}'.strip(),
-                       "left_at": "", "minutes": c["minutes_inside"], "charge": c["estimated_charge"], "status": "Inside"} for c in cars]
-            rows = inside + snap.get("sessions", [])
-            if q:
-                rows = [r for r in rows if q in " ".join(str(v) for v in r.values()).lower()]
-            if typ != "All":
-                rows = [r for r in rows if r.get("car_type") == typ]
-            cols = {"plate": "Plate", "car_type": "Type", "spot": "Spot", "entered_at": "Entered", "left_at": "Left",
-                    "minutes": "Minutes", "charge": "Charge", "status": "Status"}
-            df = pd.DataFrame(rows, columns=list(cols)).rename(columns=cols)
-        else:
-            rows = snap["events"]
-            if q:
-                rows = [r for r in rows if q in f"{r.get('kind', '')} {r.get('text', '')} {r.get('t', '')}".lower()]
-            df = pd.DataFrame(rows, columns=["t", "kind", "text"]).rename(columns={"t": "Time", "kind": "Kind", "text": "What happened"})
-        st.caption(f"{len(df)} result(s)")
-        st.dataframe(df, hide_index=True, width="stretch", height=min(380, 40 + 35 * max(len(df), 1)))
+        st.markdown(ui.card_title("History", "search what happened"), unsafe_allow_html=True)
+        tab_today, tab_month = st.tabs(["Today", "Last 30 days"])
+        today_rows = today_visits(snap)
+        with tab_today:
+            f1, f2, f3 = st.columns([2, 1, 1])
+            q = f1.text_input("Search plate, spot or text", key="hist_q", placeholder="e.g. WBX, S12, paid").strip().lower()
+            kind = f2.selectbox("Show", ["Visits", "Events"], key="hist_kind")
+            typ = f3.selectbox("Type", ["All", "Normal", "Electric", "Accessible"], key="hist_type", disabled=kind == "Events")
+            if kind == "Visits":
+                df = visits_table(today_rows, q, typ)
+            else:
+                rows = snap["events"]
+                if q:
+                    rows = [r for r in rows if q in f"{r.get('kind', '')} {r.get('text', '')} {r.get('t', '')}".lower()]
+                df = pd.DataFrame(rows, columns=["t", "kind", "text"]).rename(columns={"t": "Time", "kind": "Kind", "text": "What happened"})
+            st.caption(f"{len(df)} result(s) since the dashboard started")
+            st.dataframe(df, hide_index=True, width="stretch", height=min(380, 40 + 35 * max(len(df), 1)))
+
+        with tab_month:
+            days = snap.get("archive", [])
+            if not days:
+                st.markdown('<div class="pk"><div class="pk-empty">No daily records yet.</div></div>', unsafe_allow_html=True)
+            else:
+                st.caption(f"Every day is kept for up to 30 days ({len(days)} days available). Pick a day to open all of its visits.")
+                st.plotly_chart(charts.daily_chart(days, theme), width="stretch", config={"displayModeBar": False}, key="chart_daily")
+                sdf = pd.DataFrame(days).rename(columns={"date": "Date", "visits": "Visits", "cars_parked": "Parked", "drive_through": "Drove through",
+                                                          "income": "Income", "penalties": "Penalties", "peak_pct": "Peak full %", "avg_minutes": "Avg minutes"})
+                st.dataframe(sdf, hide_index=True, width="stretch", height=240)
+                d1, d2 = st.columns([1, 2])
+                day = d1.selectbox("Open a day", [d["date"] for d in days], key="arch_day")
+                q2 = d2.text_input("Search that day", key="arch_q", placeholder="plate, spot, status...").strip().lower()
+                day_rows = today_rows if day == days[0]["date"] else load_history(day)
+                ddf = visits_table(day_rows, q2, "All")
+                st.caption(f"{len(ddf)} of {len(day_rows)} visits on {day}")
+                st.dataframe(ddf, hide_index=True, width="stretch", height=320)
+                st.download_button("Download this day as CSV", ddf.to_csv(index=False), file_name=f"parking_{day}.csv", mime="text/csv", key="arch_dl")
 
     with st.expander("Table view of the chart data"):
         a, b, c = st.columns(3)
