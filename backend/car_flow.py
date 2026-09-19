@@ -10,6 +10,7 @@ Documented car lifecycle:
 """
 import logging
 import threading
+import time
 from collections import deque
 from datetime import datetime
 
@@ -32,6 +33,13 @@ TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 # How many EventIds to remember for duplicate detection. Old ids are forgotten
 # oldest-first so a long run cannot grow this without bound.
 MAX_REMEMBERED_EVENTS = 10_000
+
+# Do not re-read the barriers more often than this (real seconds).
+GATE_CHECK_INTERVAL_S = 5.0
+
+# Simulator seconds a car may take to reach the spot we sent it to. After this
+# the reservation is given up: see _expire_reservations.
+RESERVATION_TIMEOUT_S = 120
 
 
 def verify_signature(event):
@@ -92,6 +100,9 @@ class CarFlow:
         self.amount_check = amount_check
         self.db = db  # optional DatabaseAdapter; None = no persistence
         self.cars = {}  # plate -> state dict
+        self.gates = {}  # name -> last known barrier dict
+        self._gates_checked_at = None  # time.monotonic() of the last list_barriers()
+        self._sim_now = None  # newest ServerDateTime seen, our clock
         self._seen_event_ids = set()
         self._seen_event_order = deque()  # same ids, oldest first, for eviction
         self._last_sequence_id = None
@@ -109,17 +120,31 @@ class CarFlow:
 
     # ---- public API -------------------------------------------------------
 
+    def retry_pending(self):
+        """Retry failed commands even when no new webhook arrives.
+
+        Keep the simulator clock event-driven: wall time must not expire
+        reservations while the simulator is paused.
+        """
+        with self._lock:
+            self._retry_pending()
+
     def handle_event(self, event):
         """Webhook handler: register with webhook.register_handler()."""
         with self._lock:
             if not self._accept(event):
                 return
+            when = _parse_time(event)
+            if when and (self._sim_now is None or when > self._sim_now):
+                self._sim_now = when
             self._db("log_event", event)
             event_class = event.get("EventClass")
             if event_class == "car_spot_action":
                 self._on_car_spot_action(event)
             elif event_class == "payment_made":
                 self._on_payment_made(event)
+            elif event_class == "gate_action":
+                self._on_gate_action(event)
             self._retry_pending(skip=event.get("CarPlateNumber"))
 
     def request_exit(self, plate):
@@ -130,6 +155,7 @@ class CarFlow:
             if car is None or car["stage"] != PARKED:
                 logger.warning("request_exit(%s) ignored: not parked", plate)
                 return False
+            self._ensure_gates_open()
             try:
                 self.client.move_car(plate, "exit")
             except SimulatorError as e:
@@ -161,6 +187,61 @@ class CarFlow:
                 self._last_sequence_id = sequence_id
 
         return verify_signature(event)
+
+    # ---- barrier gates ----------------------------------------------------
+
+    def _ensure_gates_open(self, force=False):
+        """Open every healthy barrier that is not open yet.
+
+        A closed barrier silently blocks a car: move_car is still accepted (201)
+        and no error comes back, the car simply never arrives and no further
+        event is ever sent for it. Nothing else in the system opens barriers, so
+        the flow has to.
+
+        A broken or under-maintenance gate is never operated: the organisers
+        charge a penalty for that. Failures here are logged, never raised.
+        """
+        now = time.monotonic()
+        if (not force and self._gates_checked_at is not None
+                and now - self._gates_checked_at < GATE_CHECK_INTERVAL_S):
+            return
+        self._gates_checked_at = now
+        try:
+            barriers = self.client.list_barriers()
+        except SimulatorError as e:
+            logger.error("list_barriers failed: %s", e)
+            return
+        self._db("sync_gates", barriers)
+        for gate in barriers or []:
+            if not isinstance(gate, dict) or not gate.get("name"):
+                continue
+            name = gate["name"]
+            self.gates[name] = gate
+            if gate.get("broken") or gate.get("isUnderMaintenance"):
+                logger.warning("Gate %s is %s; not operating it", name,
+                               "broken" if gate.get("broken") else "under maintenance")
+                continue
+            if gate.get("state") == "Open":
+                continue
+            try:
+                self.client.open_gate(name)
+            except SimulatorError as e:
+                logger.error("open_gate(%s) failed: %s", name, e)
+            else:
+                logger.info("Opened gate %s (was %s)", name, gate.get("state"))
+
+    def _on_gate_action(self, event):
+        """Keep our view of the barriers current. The payload shape is unconfirmed,
+        so the field names are read defensively and a fresh read is forced next."""
+        name = event.get("ComponentName") or event.get("SpotName") or event.get("Name")
+        if name:
+            gate = dict(self.gates.get(name) or {"name": name})
+            state = event.get("State") or event.get("Direction")
+            if state:
+                gate["state"] = state
+            self.gates[name] = gate
+            self._db("sync_gates", [gate])
+        self._gates_checked_at = None  # re-read the real state at the next chance
 
     # ---- car_spot_action --------------------------------------------------
 
@@ -223,6 +304,7 @@ class CarFlow:
             "charging_cost": None,
             "paid": False,
             "leavepark_sent": False,
+            "move_sent_time": None,  # when we told it to go to its spot
             "session_id": None,     # database session
             "payment_id": None,     # database payment row
         }
@@ -248,6 +330,8 @@ class CarFlow:
         if spot is None:
             logger.info("No free spot for %s; waiting", car["plate"])
             return
+        # Clear the way first: a closed barrier makes move_car a silent no-op.
+        self._ensure_gates_open()
         try:
             self.client.move_car(car["plate"], spot["name"])
         except SimulatorError as e:
@@ -255,6 +339,7 @@ class CarFlow:
             return
         car["spot"] = spot["name"]
         car["stage"] = MOVING
+        car["move_sent_time"] = self._sim_now
         self._db("assign_spot", car["session_id"], spot["name"])
 
     def _on_exit_in(self, car, when):
@@ -325,6 +410,7 @@ class CarFlow:
     def _leavepark(self, car):
         if car["leavepark_sent"]:
             return
+        self._ensure_gates_open()
         try:
             self.client.move_car(car["plate"], "leavepark")
         except SimulatorError as e:
@@ -335,7 +421,36 @@ class CarFlow:
 
     # ---- retries ----------------------------------------------------------
 
+    def _expire_reservations(self):
+        """Give up a spot a car was sent to but never reached.
+
+        A car that never arrives used to hold its spot for ever. Once enough of
+        them pile up every spot looks taken, select_parking_spot returns None
+        and no new car is ever given one: the flow wedges with an empty car park.
+        Releasing the spot puts the car back in WAITING, so the next retry sends
+        move_car again (by then the barriers have been opened).
+        """
+        now = self._sim_now
+        if now is None:
+            return
+        for car in self.cars.values():
+            if car["stage"] != MOVING or not car["spot"]:
+                continue
+            sent = car["move_sent_time"]
+            if sent is None or (now - sent).total_seconds() < RESERVATION_TIMEOUT_S:
+                continue
+            logger.warning("%s never reached %s after %.0fs; releasing it and retrying",
+                           car["plate"], car["spot"], (now - sent).total_seconds())
+            self._db("set_spot_available", car["spot"])
+            car["spot"] = None
+            car["stage"] = WAITING
+            car["move_sent_time"] = None
+
     def _retry_pending(self, skip=None):
+        self._expire_reservations()
+        if any(c["stage"] in (MOVING, LEAVING) for c in self.cars.values()):
+            # Someone is in transit: make sure a barrier has not closed on them.
+            self._ensure_gates_open()
         for car in list(self.cars.values()):
             if car["plate"] == skip:
                 continue

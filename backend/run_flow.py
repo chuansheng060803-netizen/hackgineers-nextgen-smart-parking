@@ -5,6 +5,7 @@
 """
 import argparse
 import logging
+import threading
 from datetime import datetime
 
 import webhook
@@ -29,6 +30,12 @@ class DryRunClient:
     def move_car(self, name, destination):
         logger.info("[DRY RUN] would move_car(%r, %r)", name, destination)
 
+    def open_gate(self, name):
+        logger.info("[DRY RUN] would open_gate(%r)", name)
+
+    def close_gate(self, name):
+        logger.info("[DRY RUN] would close_gate(%r)", name)
+
     def charge_car(self, name, parking_cost, charging_cost):
         logger.info("[DRY RUN] would charge_car(%r, %r, %r)", name, parking_cost, charging_cost)
 
@@ -36,6 +43,15 @@ class DryRunClient:
 def log_event(event):
     logger.info("EVENT %s | server time %s | local time %s",
                 event, event.get("ServerDateTime"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+def retry_loop(flow, stop, interval=2.0):
+    """Recover pending movement and charges without waiting for another car."""
+    while not stop.wait(interval):
+        try:
+            flow.retry_pending()
+        except Exception:
+            logger.exception("Periodic car-flow retry failed")
 
 
 if __name__ == "__main__":
@@ -69,4 +85,11 @@ if __name__ == "__main__":
     flow = CarFlow(client, db=db)
     webhook.register_handler(log_event)
     webhook.register_handler(flow.handle_event)
-    webhook.run(port=args.port)
+    stop = threading.Event()
+    worker = threading.Thread(target=retry_loop, args=(flow, stop), daemon=True)
+    worker.start()
+    try:
+        webhook.run(port=args.port)
+    finally:
+        stop.set()
+        worker.join(timeout=2)

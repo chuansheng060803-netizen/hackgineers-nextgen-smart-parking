@@ -40,6 +40,14 @@ class FakeClient:
     def list_barriers(self):
         return self.barriers
 
+    def open_gate(self, name):
+        if "open_gate" in self.fail:
+            raise SimulatorError("open_gate failed")
+        self.calls.append(("open_gate", name))
+        for gate in self.barriers:
+            if gate.get("name") == name:
+                gate["state"] = "Open"
+
     def move_car(self, name, destination):
         if "move_car" in self.fail:
             raise SimulatorError("move_car failed")
@@ -175,6 +183,93 @@ class ParkingTests(FlowTestCase):
         ])
 
 
+def barrier(name, state="Closed", broken=False, maintenance=False):
+    return {"name": name, "zoneParent": "ZONE1", "state": state,
+            "broken": broken, "isUnderMaintenance": maintenance}
+
+
+class BarrierTests(FlowTestCase):
+    """A closed barrier silently swallows move_car, so the flow must open it."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(car_flow, "GATE_CHECK_INTERVAL_S", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_closed_gates_are_opened_before_the_car_is_sent(self):
+        self.client.barriers = [barrier("gateA"), barrier("gateB", state="Open")]
+        self.enter()
+        self.assertEqual(self.client.of("open_gate"), [("open_gate", "gateA")])
+        # the gate is opened before the car is told to move
+        self.assertLess(self.client.calls.index(("open_gate", "gateA")),
+                        self.client.calls.index(("move_car", PLATE, "S1")))
+
+    def test_a_broken_or_in_repair_gate_is_never_operated(self):
+        self.client.barriers = [barrier("gateA", broken=True),
+                                barrier("gateB", maintenance=True)]
+        with self.assertLogs("car_flow", "WARNING"):
+            self.enter()
+        self.assertEqual(self.client.of("open_gate"), [])
+        self.assertEqual(self.client.of("move_car"), [("move_car", PLATE, "S1")])
+
+    def test_an_already_open_gate_is_left_alone(self):
+        self.client.barriers = [barrier("gateA", state="Open")]
+        self.enter()
+        self.assertEqual(self.client.of("open_gate"), [])
+
+    def test_a_gate_that_closes_again_is_reopened_while_a_car_is_in_transit(self):
+        self.client.barriers = [barrier("gateA")]
+        self.enter()                                   # opened once
+        self.client.barriers[0]["state"] = "Closed"    # it fell shut again
+        self.unrelated_event()                         # car is still MOVING
+        self.assertEqual(len(self.client.of("open_gate")), 2)
+
+    def test_open_gate_failure_never_stops_the_car_being_sent(self):
+        self.client.barriers = [barrier("gateA")]
+        self.client.fail.add("open_gate")
+        with self.assertLogs("car_flow", "ERROR"):
+            self.enter()
+        self.assertEqual(self.client.of("move_car"), [("move_car", PLATE, "S1")])
+
+
+class ReservationTests(FlowTestCase):
+    """A car that never arrives must not hold its spot for ever."""
+
+    def test_spot_is_released_and_move_car_resent_when_the_car_never_arrives(self):
+        self.enter()
+        self.assertEqual(self.car()["spot"], "S1")
+        self.assertEqual(len(self.client.of("move_car")), 1)
+        first_sent = self.car()["move_sent_time"]
+
+        # 3 simulator minutes later, still no Park event for it
+        self.send("ENTRY1", "EntrySpot", "CarIn", "BBB 222", "Normal", "2026-09-19 14:03:00")
+
+        # The reservation was given up and the car immediately sent again, so a
+        # command swallowed by a closed barrier is not lost for ever.
+        self.assertEqual(self.client.of("move_car").count(("move_car", PLATE, "S1")), 2)
+        self.assertGreater(self.car()["move_sent_time"], first_sent)
+        # exactly one car holds the single spot: nothing is double-booked
+        self.assertEqual(len([c for c in self.flow.cars.values() if c["spot"]]), 1)
+
+    def test_a_car_that_arrives_in_time_keeps_its_spot(self):
+        self.enter()
+        self.park_in()
+        self.send("ENTRY1", "EntrySpot", "CarIn", "BBB 222", "Normal", "2026-09-19 14:09:00")
+        self.assertEqual(self.car()["stage"], car_flow.PARKED)
+        self.assertEqual(self.car()["spot"], "S1")
+
+    def test_the_car_park_never_wedges_when_nobody_arrives(self):
+        """30 cars that never park must not make a free car park look full."""
+        self.client.spots = [spot(f"S{i}") for i in range(1, 4)]
+        for i in range(12):
+            self.send("ENTRY1", "EntrySpot", "CarIn", f"CAR {i}", "Normal",
+                      f"2026-09-19 14:{i * 3:02d}:00")
+        # spots keep being reused instead of being locked up for ever
+        self.assertLessEqual(len([c for c in self.flow.cars.values() if c["spot"]]), 3)
+        self.assertGreater(len(self.client.of("move_car")), 3)
+
+
 class EventGateTests(FlowTestCase):
     def test_duplicate_event_id_processed_once(self):
         e = self.event(EventClass="car_spot_action", SpotName="ENTRY1", SpotType="EntrySpot",
@@ -296,6 +391,33 @@ class PaymentTests(FlowTestCase):
 
 
 class ErrorHandlingTests(FlowTestCase):
+    def test_move_retries_without_another_webhook(self):
+        self.client.fail.add("move_car")
+        self.enter()
+        self.client.fail.clear()
+        self.flow.retry_pending()
+        self.assertEqual(self.car()["stage"], car_flow.MOVING)
+        self.assertEqual(self.client.of("move_car"), [("move_car", PLATE, "S1")])
+
+    def test_charge_retries_without_another_webhook_and_waits_for_payment(self):
+        self.client.fail.add("charge_car")
+        self.to_charging()
+        self.client.fail.clear()
+        self.flow.retry_pending()
+        self.flow.retry_pending()
+        self.assertEqual(self.client.of("charge_car"), [("charge_car", PLATE, 10.0, 0)])
+        self.assertEqual(self.car()["stage"], car_flow.CHARGING)
+        self.assertNotIn(("move_car", PLATE, "leavepark"), self.client.calls)
+
+    def test_paid_departure_retries_without_another_webhook(self):
+        self.to_charging()
+        self.client.fail.add("move_car")
+        self.payment()
+        self.client.fail.clear()
+        self.flow.retry_pending()
+        self.flow.retry_pending()
+        self.assertEqual(self.client.calls.count(("move_car", PLATE, "leavepark")), 1)
+
     def test_move_car_failure_is_retried_on_next_event(self):
         self.client.fail.add("move_car")
         self.enter()  # must not raise
