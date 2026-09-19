@@ -353,6 +353,28 @@ def mark_car_parked(session_id, parked_time=None):
         connection.close()
 
 
+def assign_session_spot(session_id, spot_name):
+    connection = get_connection()
+
+    try:
+        connection.execute(
+            """
+            UPDATE parking_sessions
+            SET spot_name = ?
+            WHERE id = ?
+            """,
+            (
+                spot_name,
+                session_id,
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
 def end_parking_session(session_id, departure_time=None):
     if departure_time is None:
         departure_time = _now()
@@ -454,6 +476,33 @@ def record_payment(
 
         connection.commit()
         return cursor.lastrowid
+
+    finally:
+        connection.close()
+
+
+def mark_payment_paid(payment_id, paid_at=None):
+    if paid_at is None:
+        paid_at = _now()
+
+    connection = get_connection()
+
+    try:
+        connection.execute(
+            """
+            UPDATE payments
+            SET
+                status = 'paid',
+                paid_at = ?
+            WHERE id = ?
+            """,
+            (
+                paid_at,
+                payment_id,
+            ),
+        )
+
+        connection.commit()
 
     finally:
         connection.close()
