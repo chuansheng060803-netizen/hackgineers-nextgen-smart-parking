@@ -5,6 +5,8 @@ from database.database_service import (
     upsert_gate,
     start_parking_session,
     mark_car_parked,
+    end_parking_session,
+    get_parking_session,
     record_payment,
     log_event,
     get_parking_spots,
@@ -71,6 +73,20 @@ payment_id = record_payment(
 
 print("Created payment:", payment_id)
 
+# ---------------------------------------------
+# Car leaves the car park
+# ---------------------------------------------
+
+end_parking_session(session_id)
+
+completed_session = get_parking_session(session_id)
+
+assert completed_session is not None
+assert completed_session["departure_time"] is not None
+assert completed_session["status"] == "completed"
+
+print("✅ Departure recorded")
+print("✅ Parking session completed")
 
 # ---------------------------------------------
 # Store event

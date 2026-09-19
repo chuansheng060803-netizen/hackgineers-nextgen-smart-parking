@@ -1,4 +1,8 @@
 import json
+import hashlib
+import hmac
+import secrets
+
 from datetime import datetime, timezone
 
 from database.database import get_connection
@@ -10,12 +14,60 @@ def _now():
 
 
 # =========================================================
-# USERS / AUTHENTICATION
+def hash_password(password):
+    """
+    Convert a plain password into a salted secure hash.
+    The plain password is never stored in the database.
+    """
+    salt = secrets.token_bytes(16)
+    iterations = 200_000
+
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        iterations,
+    )
+
+    return (
+        f"pbkdf2_sha256$"
+        f"{iterations}$"
+        f"{salt.hex()}$"
+        f"{password_hash.hex()}"
+    )
+
+
+def verify_password(password, stored_hash):
+    """
+    Check a plain password against the stored password hash.
+    """
+    try:
+        algorithm, iterations, salt_hex, hash_hex = stored_hash.split("$")
+
+        if algorithm != "pbkdf2_sha256":
+            return False
+
+        calculated_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            bytes.fromhex(salt_hex),
+            int(iterations),
+        )
+
+        return hmac.compare_digest(
+            calculated_hash.hex(),
+            hash_hex,
+        )
+
+    except (ValueError, TypeError):
+        return False
 # =========================================================
 
-def create_user(username, password_hash, role):
+def create_user(username, password, role):
     if role not in ("Admin", "Operator"):
         raise ValueError("Role must be 'Admin' or 'Operator'")
+
+    password_hash = hash_password(password)
 
     connection = get_connection()
 
@@ -61,6 +113,34 @@ def get_user_by_username(username):
     finally:
         connection.close()
 
+def authenticate_user(username, password):
+    """
+    Authenticate a user using username and password.
+
+    Returns the user dictionary if authentication succeeds.
+    Returns None if authentication fails.
+    """
+    user = get_user_by_username(username)
+
+    if user is None:
+        return None
+
+    if not user["is_active"]:
+        return None
+
+    if not verify_password(password, user["password_hash"]):
+        return None
+
+    return user
+
+def has_role(user, required_role):
+    """
+    Check whether an authenticated user has a specific role.
+    """
+    if user is None:
+        return False
+
+    return user["role"] == required_role
 
 # =========================================================
 # PARKING SPOTS
@@ -318,7 +398,23 @@ def get_active_sessions():
     finally:
         connection.close()
 
+def get_parking_session(session_id):
+    connection = get_connection()
 
+    try:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM parking_sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+
+        return dict(row) if row else None
+
+    finally:
+        connection.close()
 # =========================================================
 # PAYMENTS
 # =========================================================
