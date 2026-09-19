@@ -117,7 +117,7 @@ class LifecycleTests(SnapshotTestCase):
 
     def test_pending_payment_shows_estimate_but_no_income(self):
         self.to_charging()
-        self.payment()  # default check is fail-closed: stays pending
+        self.payment(amount=3.0)  # wrong amount (billed 10.0): stays pending
         snap = self.snap()
         self.assertEqual(self.car_row(snap)["estimated_charge"], 10.0)
         self.assertEqual(snap["stats"]["revenue"], 0.0)

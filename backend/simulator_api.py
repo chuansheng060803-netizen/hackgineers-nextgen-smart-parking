@@ -13,13 +13,24 @@ PASSWORD = os.getenv("SIMULATOR_PASSWORD", "admin")
 TIMEOUT = 10  # seconds
 
 
+def use_ipv4(url):
+    """Write "localhost" as 127.0.0.1.
+
+    On Windows "localhost" tries the IPv6 address (::1) first; nothing listens
+    there, and the refusal takes about 2 seconds before the IPv4 address is
+    tried. Measured on the live system: every simulator call took 2.06 s, which
+    made the car logic fall minutes behind. The IPv4 address has no such delay.
+    """
+    return url.replace("//localhost", "//127.0.0.1", 1)
+
+
 class SimulatorError(Exception):
     """Any failure talking to the simulator (network, HTTP status, bad JSON)."""
 
 
 class SimulatorClient:
     def __init__(self, base_url=BASE_URL, email=EMAIL, password=PASSWORD, timeout=TIMEOUT):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = use_ipv4(base_url.rstrip("/"))
         self.email = email
         self.password = password
         self.timeout = timeout

@@ -1,0 +1,389 @@
+{
+  "/api/v1/list-parking-spots": [
+    {
+      "name": "S3",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S4",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S1",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S2",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S5",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S28",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S30",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S27",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S29",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S25",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S24",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S23",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S22",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S21",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S11",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S12",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S13",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S14",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S15",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S20",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S19",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S18",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S17",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S16",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S26",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S6",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S8",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S7",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S9",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "S10",
+      "purpose": "Park",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "ENTRY1",
+      "purpose": "EntrySpot",
+      "parkingForCarType": "Any",
+      "zoneParent": "",
+      "detectedCars": 2,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "EXIT_EXIT",
+      "purpose": "ExitSpot",
+      "parkingForCarType": "Any",
+      "zoneParent": "ZONE1",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "ESCAPE1",
+      "purpose": "LeaveParking",
+      "parkingForCarType": "Any",
+      "zoneParent": "",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "ESCAPE2",
+      "purpose": "LeaveParking",
+      "parkingForCarType": "Any",
+      "zoneParent": "",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "ESCAPE10",
+      "purpose": "LeaveParking",
+      "parkingForCarType": "Any",
+      "zoneParent": "",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    },
+    {
+      "name": "ESCAPE4",
+      "purpose": "LeaveParking",
+      "parkingForCarType": "Any",
+      "zoneParent": "",
+      "detectedCars": 0,
+      "broken": false,
+      "isUnderMaintenance": false
+    }
+  ],
+  "/api/v1/list-barriers": [
+    {
+      "name": "gateA",
+      "zoneParent": "ZONE1",
+      "broken": false,
+      "isUnderMaintenance": false,
+      "state": "Closed"
+    },
+    {
+      "name": "gateB",
+      "zoneParent": "ZONE1",
+      "broken": false,
+      "isUnderMaintenance": false,
+      "state": "Open"
+    },
+    {
+      "name": "gateC",
+      "zoneParent": "",
+      "broken": false,
+      "isUnderMaintenance": false,
+      "state": "Open"
+    }
+  ],
+  "/api/v1/list-zones": [
+    {
+      "name": "ZONE1",
+      "gasCarbonMonoxideLevel": 0,
+      "risk": "Safe"
+    }
+  ],
+  "/api/v1/list-lights": [
+    {
+      "name": "t_0",
+      "group": "G1",
+      "zoneParent": "ZONE1",
+      "isOn": true
+    },
+    {
+      "name": "t_1",
+      "group": "G1",
+      "zoneParent": "ZONE1",
+      "isOn": true
+    },
+    {
+      "name": "t_4",
+      "group": "G1",
+      "zoneParent": "",
+      "isOn": true
+    },
+    {
+      "name": "light26",
+      "group": "G1",
+      "zoneParent": "",
+      "isOn": true
+    }
+  ],
+  "/api/v1/list-alarms": [],
+  "/api/v1/status": {
+    "isActive": false,
+    "cars": 5
+  }
+}

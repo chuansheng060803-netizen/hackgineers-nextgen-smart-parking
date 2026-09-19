@@ -9,7 +9,9 @@ Documented car lifecycle:
   -> ExitSpot CarIn -> ExitSpot CarOut
 """
 import logging
+import os
 import threading
+import time
 from datetime import datetime
 
 from parking_algorithm import select_parking_spot
@@ -27,6 +29,13 @@ CHARGING = "CHARGING"    # charge_car() sent, waiting for a valid payment_made
 DONE = "DONE"            # valid payment received and leavepark sent
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# Barrier gates a car has to pass. The simulator gives no coordinates, so which
+# gate guards which way is configuration, not something we can work out at run
+# time. Level 1: gateA sits just past ENTRY1, gateB just before EXIT_EXIT.
+ENTRY_GATES = [g.strip() for g in os.getenv("ENTRY_GATES", "gateA").split(",") if g.strip()]
+EXIT_GATES = [g.strip() for g in os.getenv("EXIT_GATES", "gateB").split(",") if g.strip()]
+GATE_HEALTH_CACHE_S = 3.0    # don't re-read barrier health for every single car
 
 
 def verify_signature(event):
@@ -46,11 +55,23 @@ def verify_signature(event):
 def amount_is_valid(event, car):
     """Is payment_made.Amount the amount we expect for this car?
 
-    NOT IMPLEMENTED on purpose: what Amount represents is not confirmed, so
-    this fails closed (no payment is accepted, leavepark is never sent).
-    The requested amounts are stored as car["parking_cost"] and
-    car["charging_cost"] for when this is decided.
+    Confirmed against the live simulator: Amount is a STRING holding the total
+    it charged, which is what charge_car() asked for. For example a car billed
+    parkingCost=1.0233, chargingCost=0 pays back Amount='1.02', so the amount is
+    compared to the sum of the two requested costs, allowing for the rounding to
+    two decimals. Anything else is refused, and leavepark is not sent.
     """
+    expected = (car.get("parking_cost") or 0) + (car.get("charging_cost") or 0)
+    raw = event.get("Amount")
+    try:
+        paid = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("payment_made for %s has no usable Amount: %r", car["plate"], raw)
+        return False
+    if abs(paid - round(expected, 2)) <= 0.011:
+        return True
+    logger.warning("payment_made for %s: paid %.2f but we billed %.2f",
+                   car["plate"], paid, expected)
     return False
 
 
@@ -77,14 +98,20 @@ def _parse_time(event):
 
 
 class CarFlow:
-    def __init__(self, client, amount_check=amount_is_valid, db=None):
+    def __init__(self, client, amount_check=amount_is_valid, db=None, spots_cache_s=0.0):
         self.client = client
+        self.spots_cache_s = spots_cache_s   # 0 = ask the simulator every time
+        self._spots = None
+        self._spots_at = None
+        self.processed = 0                   # events handled so far (for the backlog gauge)
         self.amount_check = amount_check
         self.db = db  # optional DatabaseAdapter; None = no persistence
         self.cars = {}  # plate -> state dict
         self._seen_event_ids = set()
         self._last_sequence_id = None
         self._lock = threading.RLock()
+        self._barriers = []          # cached barrier health, see _gate_is_ok
+        self._barriers_at = None
 
     def _db(self, method, *args):
         """Call a database adapter method; a database failure never breaks the flow."""
@@ -101,6 +128,7 @@ class CarFlow:
     def handle_event(self, event):
         """Webhook handler: register with webhook.register_handler()."""
         with self._lock:
+            self.processed += 1
             if not self._accept(event):
                 return
             self._db("log_event", event)
@@ -126,6 +154,40 @@ class CarFlow:
                 return False
             car["stage"] = LEAVING
             return True
+
+    # ---- barrier gates ----------------------------------------------------
+
+    def _gate_is_ok(self, name):
+        """True only if this barrier is known to be healthy.
+
+        The organisers' rule is never to operate a broken or under-maintenance
+        component, so an unknown health counts as "do not touch".
+        """
+        now = time.monotonic()
+        if self._barriers_at is None or now - self._barriers_at > GATE_HEALTH_CACHE_S:
+            try:
+                self._barriers = self.client.list_barriers() or []
+                self._barriers_at = now
+            except (SimulatorError, AttributeError) as e:
+                logger.warning("list_barriers failed, not touching gates: %s", e)
+                return False
+        for barrier in self._barriers:
+            if isinstance(barrier, dict) and barrier.get("name") == name:
+                return not barrier.get("broken") and not barrier.get("isUnderMaintenance")
+        logger.warning("Gate %r is not in the simulator's barrier list", name)
+        return False
+
+    def _open_gates(self, names, why):
+        """Raise the barriers a car needs to pass. Without this no car can move:
+        a closed barrier leaves them queued at the entry for ever."""
+        for name in names:
+            if not self._gate_is_ok(name):
+                continue
+            try:
+                self.client.open_gate(name)
+                logger.info("Opened %s (%s)", name, why)
+            except (SimulatorError, AttributeError) as e:
+                logger.error("open_gate(%s) failed: %s", name, e)
 
     # ---- event gate -------------------------------------------------------
 
@@ -216,9 +278,21 @@ class CarFlow:
         car["session_id"] = self._db("start_session", plate, car["car_type"], when)
         self._allocate(car)
 
+    def _parking_spots(self):
+        """The spot list, optionally reused for spots_cache_s seconds. Our own
+        reservations are tracked locally, so a few seconds old is safe and it
+        saves one simulator call per waiting car per event."""
+        now = time.monotonic()
+        if (self.spots_cache_s and self._spots is not None
+                and now - self._spots_at < self.spots_cache_s):
+            return self._spots
+        self._spots = self.client.list_parking_spots()
+        self._spots_at = now
+        return self._spots
+
     def _allocate(self, car):
         try:
-            spots = self.client.list_parking_spots()
+            spots = self._parking_spots()
         except SimulatorError as e:
             logger.error("list_parking_spots failed: %s", e)
             return
@@ -238,12 +312,14 @@ class CarFlow:
         car["spot"] = spot["name"]
         car["stage"] = MOVING
         self._db("assign_spot", car["session_id"], spot["name"])
+        self._open_gates(ENTRY_GATES, f"letting {car['plate']} in")
 
     def _on_exit_in(self, car, when):
         car["exit_in_time"] = when
         if car["stage"] in (CHARGING, DONE):
             return  # duplicate; never charge twice
         car["stage"] = AT_EXIT
+        self._open_gates(EXIT_GATES, f"letting {car['plate']} out")
         self._charge(car)
 
     def _billing_period(self, car):
@@ -301,6 +377,7 @@ class CarFlow:
             return  # paid but not sent, retried on the next event
         car["leavepark_sent"] = True
         car["stage"] = DONE
+        self._open_gates(EXIT_GATES, f"{car['plate']} is leaving")
 
     # ---- retries ----------------------------------------------------------
 
