@@ -11,7 +11,7 @@ parking_spots = [
         "purpose": "Park",
         "parkingForCarType": "Any",
         "zoneParent": "ZONE1",
-        "detectedCars": ["ABC 123"],
+        "detectedCars": 1,
         "broken": False,
         "isUnderMaintenance": False
     },
@@ -21,7 +21,7 @@ parking_spots = [
         "purpose": "Park",
         "parkingForCarType": "Any",
         "zoneParent": "ZONE1",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     },
@@ -31,7 +31,7 @@ parking_spots = [
         "purpose": "Park",
         "parkingForCarType": "Electric",
         "zoneParent": "ZONE1",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     },
@@ -41,7 +41,7 @@ parking_spots = [
         "purpose": "Park",
         "parkingForCarType": "Any",
         "zoneParent": "ZONE1",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": True,
         "isUnderMaintenance": False
     },
@@ -51,7 +51,7 @@ parking_spots = [
         "purpose": "EntrySpot",
         "parkingForCarType": "Any",
         "zoneParent": "ZONE1",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     }

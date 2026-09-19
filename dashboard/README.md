@@ -1,6 +1,6 @@
 # Dashboard (Streamlit)
 
-Live view of the smart car park: free/occupied spots, the S1-S30 map, cars inside, recent activity,
+Live view of the smart car park: free/occupied spots, the S1-S30 map (6 zones with 5 slots each), cars inside, recent activity,
 carbon monoxide per zone, gate and fan status, and alerts for the challenge scenarios.
 
 The dashboard only **reads** data. It never talks to the simulator and never changes the backend.
@@ -42,6 +42,7 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `cars` | `[{plate, car_type, status:"Heading to spot\|Parked\|Heading to exit", spot, entered_at, minutes_inside, estimated_charge, flag:"rogue"\|null, assigned_spot}]` |
 | `events` | newest first: `[{t:"12:00:05", kind:"entry\|park\|exit\|payment\|penalty\|rogue\|refused\|component\|co\|gate", text}]` |
 | `sessions` | finished visits, newest first, for the History search: `[{plate, car_type, spot, entered_at:"2026-01-01 12:00:00", left_at, minutes, charge, status:"Completed"}]` |
+| `archive` | one summary row per day, newest first (today first), up to 30 days, for the 30-day history: `[{date:"2026-01-01", visits, cars_parked, drive_through, income, penalties, peak_pct, avg_minutes}]` |
 | `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance"}]` |
 | `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance"}]` |
 | `zones` | `[{name:"ZONE1", co_ppm:12.3, risk:"Safe\|Mid\|High\|Critical"}]` (50 ppm and up counts as Mid) |
@@ -51,6 +52,10 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `stats` | `{revenue, cars_served, penalty_count, penalty_total, refused_last_10min}` |
 | `penalties` | `[{t, reason, amount, component}]` |
 | `alerts` | optional. If present it is shown as-is: `[{severity:"critical\|warning\|info", kind, title, detail}]`. If absent the dashboard derives alerts itself. |
+
+**One more endpoint for the 30-day history:** when someone picks a day, the dashboard calls
+`GET {DASHBOARD_API_URL}/api/history?date=2026-01-01` and expects the list of that day's visits, same fields as `sessions`.
+The backend should keep 30 days and delete anything older.
 
 `mock_data.py` produces exactly this shape and is the reference example.
 

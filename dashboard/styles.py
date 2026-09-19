@@ -11,13 +11,13 @@ TOKENS = {
     "dark": {
         "surface": "#1a1a19", "surface2": "#222220", "ink": "#f4f4f1", "ink2": "#c3c2b7", "muted": "#898781",
         "grid": "#2c2c2a", "baseline": "#383835", "border": "rgba(255,255,255,0.10)",
-        "s1": "#3987e5", "s2": "#d95926", "s3": "#199e70",
+        "s1": "#3987e5", "s2": "#d95926", "s3": "#199e70", "s4": "#c98500", "s5": "#d55181", "s6": "#9085e9",
         "on_fill": "#ffffff",
     },
     "light": {
         "surface": "#fcfcfb", "surface2": "#f3f3f0", "ink": "#0b0b0b", "ink2": "#52514e", "muted": "#898781",
         "grid": "#e1e0d9", "baseline": "#c3c2b7", "border": "rgba(11,11,11,0.10)",
-        "s1": "#2a78d6", "s2": "#eb6834", "s3": "#1baf7a",
+        "s1": "#2a78d6", "s2": "#eb6834", "s3": "#1baf7a", "s4": "#eda100", "s5": "#e87ba4", "s6": "#4a3aa7",
         "on_fill": "#ffffff",
     },
 }
@@ -90,22 +90,28 @@ def css(theme):
 .pk-zone-h b {{ font-size:13.5px; }}
 .pk-track {{ flex:1; min-width:80px; height:6px; border-radius:99px; background: var(--pk-surface2); border:1px solid var(--pk-grid); overflow:hidden; }}
 .pk-track > span {{ display:block; height:100%; background: var(--pk-s1); border-radius:99px; }}
-.pk-spots {{ display:grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap:6px; }}
-@media (max-width: 1250px) {{ .pk-spots {{ grid-template-columns: repeat(5, minmax(0, 1fr)); }} }}
-.pk-spot {{ position:relative; border-radius:9px; padding:7px 7px 6px; min-height:58px; display:flex; flex-direction:column; justify-content:space-between;
-  background: var(--pk-surface2); border:1px solid var(--pk-grid); color: var(--pk-ink2); transition: background .3s, border-color .3s; }}
-.pk-spot .n {{ font-weight:700; font-size:12.5px; color: var(--pk-ink); }}
-.pk-spot .top {{ display:flex; align-items:center; justify-content:space-between; gap:4px; }}
-.pk-spot .l {{ font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.pk-spot .k {{ font-size:8px; font-weight:700; letter-spacing:0; padding:0 4px; border-radius:99px;
+.pk-spots {{ display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap:10px; }}
+@media (max-width: 900px) {{ .pk-spots {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
+.pk-spot {{ position:relative; border-radius:12px; min-height:118px; padding:8px 9px 9px; display:flex; flex-direction:column; align-items:center;
+  justify-content:space-between; background: var(--pk-surface2); border:2px dashed var(--pk-base); color: var(--pk-muted);
+  transition: background .3s, border-color .3s, color .3s; }}
+.pk-spot .top {{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:4px; }}
+.pk-spot .n {{ font-weight:700; font-size:13px; color: var(--pk-ink); }}
+.pk-spot .k {{ display:inline-flex; align-items:center; gap:3px; font-size:9.5px; font-weight:700; padding:1px 6px 1px 4px; border-radius:99px;
   border:1px solid var(--pk-base); color: var(--pk-ink2); }}
-.pk-spot.occupied {{ background: var(--pk-s1); border-color: var(--pk-s1); color: var(--pk-on); }}
-.pk-spot.occupied .n {{ color: var(--pk-on); }} .pk-spot.occupied .k {{ color: var(--pk-on); border-color: rgba(255,255,255,.55); }}
-.pk-spot.reserved {{ background: transparent; border:2px solid var(--pk-s1); padding:6px 6px 5px; color: var(--pk-ink); }}
-.pk-spot.broken {{ background: var(--pk-crit); border-color: var(--pk-crit); color:#fff; }}
-.pk-spot.broken .n, .pk-spot.broken .k {{ color:#fff; border-color: rgba(255,255,255,.55); }}
-.pk-spot.maintenance {{ background: var(--pk-warn); border-color: var(--pk-warn); color:#111; }}
-.pk-spot.maintenance .n, .pk-spot.maintenance .k {{ color:#111; border-color: rgba(0,0,0,.4); }}
+.pk-spot .k svg {{ width:10px; height:10px; }}
+.pk-spot .art {{ height:56px; display:flex; align-items:center; justify-content:center; }}
+.pk-spot .art svg {{ height:52px; width:auto; }}
+.pk-spot .art.p {{ font-size:30px; font-weight:800; color: var(--pk-base); opacity:.7; }}
+.pk-spot .l {{ font-size:11.5px; font-weight:600; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color: var(--pk-ink2); }}
+.pk-spot.occupied {{ background: color-mix(in srgb, var(--pk-s1) 14%, var(--pk-surface2)); border:2px solid var(--pk-s1); color: var(--pk-s1); }}
+.pk-spot.occupied .l {{ color: var(--pk-ink); }}
+.pk-spot.reserved {{ background: transparent; border:2px dashed var(--pk-s1); color: var(--pk-s1); }}
+.pk-spot.reserved .l {{ color: var(--pk-ink); }}
+.pk-spot.broken {{ background: color-mix(in srgb, var(--pk-crit) 14%, var(--pk-surface2)); border:2px solid var(--pk-crit); color: var(--pk-crit); }}
+.pk-spot.maintenance {{ background: color-mix(in srgb, var(--pk-warn) 16%, var(--pk-surface2)); border:2px solid var(--pk-warn); color: var(--pk-warn); }}
+.pk-spot.broken .l, .pk-spot.maintenance .l {{ color: var(--pk-ink); }}
+.pk-spot .art.st svg {{ height:36px; width:36px; }}
 .pk-spot.rogue {{ box-shadow: 0 0 0 2px var(--pk-surface), 0 0 0 4px var(--pk-crit); }}
 
 .pk-row {{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--pk-grid); font-size:13.5px; }}
