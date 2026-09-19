@@ -405,29 +405,29 @@ def store_user(username, password_hash, role):
 
     connection = get_connection()
 
-    cursor = connection.execute(
-        """
-        INSERT INTO users (
-            username,
-            password_hash,
-            role
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO users (
+                username,
+                password_hash,
+                role
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                username,
+                password_hash,
+                role
+            )
         )
-        VALUES (?, ?, ?)
-        """,
-        (
-            username,
-            password_hash,
-            role
-        )
-    )
 
-    connection.commit()
+        connection.commit()
 
-    user_id = cursor.lastrowid
+        return cursor.lastrowid
 
-    connection.close()
-
-    return user_id
+    finally:
+        connection.close()
 
 def create_user(username, password, role):
     username = str(username).strip()

@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -279,13 +280,28 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         self.assertIsInstance(history.get_json(), list)
 
-        refused = http.post("/api/control/gate/gateA/open", json={"role": "viewer"})
-        self.assertEqual(refused.status_code, 403)
+        refused = http.post("/api/control/gate/gateA/open", json={"role": "Admin"})
+        self.assertEqual(refused.status_code, 401)
         self.assertFalse(refused.get_json()["ok"])
 
-        allowed = http.post("/api/control/gate/gateA/open", json={"role": "operator"})
-        self.assertEqual(allowed.status_code, 200)
-        self.assertTrue(allowed.get_json()["ok"])
+        with mock.patch("database.database_service.authenticate_user") as authenticate:
+            with mock.patch.object(self.state, "control", wraps=self.state.control) as control:
+                authenticate.return_value = None
+                refused = http.post("/api/control/gate/gateA/open", auth=("alice", "wrong"))
+                self.assertEqual(refused.status_code, 401)
+                authenticate.assert_called_once_with("alice", "wrong")
+                control.assert_not_called()
+
+                authenticate.return_value = {"role": "OPERATOR"}
+                allowed = http.post("/api/control/gate/gateA/open", auth=("alice", "correct"),
+                                    json={"role": "Admin"})
+                self.assertEqual(allowed.status_code, 200)
+                self.assertTrue(allowed.get_json()["ok"])
+                control.assert_called_once_with("gate", "gateA", "open", "OPERATOR")
+
+                refused = http.post("/api/control/gate/gateZ/open", auth=("alice", "correct"))
+                self.assertEqual(refused.status_code, 403)
+                self.assertFalse(refused.get_json()["ok"])
 
         self.assertTrue(http.get("/api/health").get_json()["ok"])
 
