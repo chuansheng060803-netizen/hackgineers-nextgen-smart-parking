@@ -1,5 +1,8 @@
 from database.database import get_connection
+import hashlib
+import hmac
 import json
+import secrets
 
 def start_session(
     plate,
@@ -338,7 +341,68 @@ def log_event(event):
     connection.commit()
     connection.close()
 
+PBKDF2_ITERATIONS = 200_000
+
+
+def normalize_role(role):
+    role = str(role).strip().upper()
+
+    if role not in ("ADMIN", "OPERATOR"):
+        raise ValueError("Role must be ADMIN or OPERATOR")
+
+    return role
+
+
+def hash_password(password):
+    if not password:
+        raise ValueError("Password must not be empty")
+
+    salt = secrets.token_hex(16)
+
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        PBKDF2_ITERATIONS
+    ).hex()
+
+    return (
+        f"pbkdf2_sha256$"
+        f"{PBKDF2_ITERATIONS}$"
+        f"{salt}$"
+        f"{password_hash}"
+    )
+
+
+def verify_password(password, stored_hash):
+    if not password or not stored_hash:
+        return False
+
+    try:
+        algorithm, iterations, salt, expected_hash = stored_hash.split("$")
+
+        if algorithm != "pbkdf2_sha256":
+            return False
+
+        calculated_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            bytes.fromhex(salt),
+            int(iterations)
+        ).hex()
+
+        return hmac.compare_digest(
+            calculated_hash,
+            expected_hash
+        )
+
+    except (ValueError, TypeError):
+        return False
+
+
 def store_user(username, password_hash, role):
+    role = normalize_role(role)
+
     connection = get_connection()
 
     cursor = connection.execute(
@@ -365,6 +429,26 @@ def store_user(username, password_hash, role):
 
     return user_id
 
+def create_user(username, password, role):
+    username = str(username).strip()
+
+    if not username:
+        raise ValueError("Username must not be empty")
+
+    if not password:
+        raise ValueError("Password must not be empty")
+
+    role = normalize_role(role)
+
+    password_hash = hash_password(password)
+
+    return store_user(
+        username,
+        password_hash,
+        role
+    )
+
+
 def get_user_by_username(username):
     connection = get_connection()
 
@@ -384,3 +468,154 @@ def get_user_by_username(username):
     connection.close()
 
     return user
+
+
+def authenticate_user(username, password):
+    user = get_user_by_username(username)
+
+    if user is None:
+        return None
+
+    if not verify_password(
+        password,
+        user["password_hash"]
+    ):
+        return None
+
+    return user
+
+
+def has_role(user, role):
+    if user is None:
+        return False
+
+    try:
+        required_role = normalize_role(role)
+    except ValueError:
+        return False
+
+    return user["role"] == required_role
+
+
+def get_parking_session(session_id):
+    connection = get_connection()
+
+    row = connection.execute(
+        """
+        SELECT *
+        FROM parking_sessions
+        WHERE id = ?
+        """,
+        (session_id,)
+    ).fetchone()
+
+    connection.close()
+
+    return dict(row) if row else None
+
+
+def get_sessions(status=None):
+    connection = get_connection()
+
+    if status is None:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM parking_sessions
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    else:
+        status = str(status).strip().upper()
+
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM parking_sessions
+            WHERE status = ?
+            ORDER BY id DESC
+            """,
+            (status,)
+        ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_active_sessions():
+    return get_sessions("ACTIVE")
+
+
+def get_payments():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM payments
+        ORDER BY id DESC
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_parking_spots():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM parking_spots
+        ORDER BY name
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_gates():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM gates
+        ORDER BY name
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_recent_events(limit=100):
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 100
+
+    limit = max(1, min(limit, 1000))
+
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM events
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,)
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]

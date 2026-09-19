@@ -89,7 +89,14 @@ def do_control(kind, name, action, role):
         if data_source.mode() == "db":
             res = {"ok": False, "message": "Manual controls are not available in database mode."}
         elif data_source.mode() == "api":
-            res = data_source.send_control(data_source.api_url(), kind, name, action, role)
+            res = data_source.send_control(
+                data_source.api_url(),
+                kind,
+                name,
+                action,
+                ss.get("user"),
+                ss.get("auth_password")
+            )
         else:
             res = get_world().control(kind, name, action, role)
     except Exception as exc:  # noqa: BLE001
@@ -166,11 +173,16 @@ def load_snapshot():
 with st.sidebar:
     st.markdown("### Controls")
     st.selectbox("Theme", ["Match browser", "Dark", "Light"], key="theme_choice")
-    if data_source.mode() == "db":
+    if data_source.mode() in ("db", "api"):
         auth.sidebar_login(st)
     else:
-        st.selectbox("Signed in as", ["Viewer", "Operator", "Admin"], index=1, key="role")
-        st.caption("Demo sign-in. Use DASHBOARD_SOURCE=db for the real login.")
+        st.selectbox(
+            "Signed in as",
+            ["Viewer", "Operator", "Admin"],
+            index=1,
+            key="role"
+        )
+        st.caption("Demo sign-in for mock mode.")
     st.select_slider("Refresh every (seconds)", options=[1, 2, 3, 5, 10], value=2, key="refresh_s")
     st.caption(f"Data source: **{data_source.mode()}**" + (f" ({data_source.api_url()})" if data_source.mode() == "api" else ""))
     if data_source.mode() == "mock":
@@ -190,7 +202,7 @@ with st.sidebar:
         for label, key, note in DEMOS:
             st.button(label, key=f"btn_{key}", width="stretch", on_click=run_demo, args=(key, note))
 
-if data_source.mode() == "db" and not st.session_state.get("role"):
+if data_source.mode() in ("db", "api") and not st.session_state.get("role"):
     st.info("Sign in from the sidebar to view the dashboard.")
     st.stop()
 

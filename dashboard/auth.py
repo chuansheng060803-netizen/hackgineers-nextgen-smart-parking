@@ -12,13 +12,22 @@ if _REPO_ROOT not in sys.path:
 
 
 def authenticate(username, password):
-    """The user's role ("Admin" or "Operator"), or None if the login is wrong or the user is inactive."""
+    """Return 'Admin' or 'Operator' when login succeeds, otherwise None."""
+
     if not username or not password:
         return None
-    from database import database_service  # imported here so mock mode needs no database
 
-    user = database_service.authenticate_user(username, password)
-    return user["role"] if user else None
+    from database import database_service
+
+    user = database_service.authenticate_user(
+        username,
+        password
+    )
+
+    if user is None:
+        return None
+
+    return user["role"].title()
 
 
 def sidebar_login(st):
@@ -29,6 +38,7 @@ def sidebar_login(st):
         if st.button("Sign out", key="sign_out"):
             ss.pop("role", None)
             ss.pop("user", None)
+            ss.pop("auth_password", None)
             st.rerun()
         return
     with st.form("login_form"):
@@ -41,7 +51,9 @@ def sidebar_login(st):
                 st.error(f"Sign-in is unavailable: {exc}")
                 return
             if role:
-                ss["role"], ss["user"] = role, username
+                ss["role"] = role
+                ss["user"] = username
+                ss["auth_password"] = password
                 st.rerun()
             else:
                 st.error("Incorrect username or password.")
