@@ -95,3 +95,14 @@ class SimulatorClient:
     def close_gate(self, name):
         """POST /api/v1/barrier-gates/{name}/close (201, empty body). Returns None."""
         self.call("POST", f"/api/v1/barrier-gates/{quote(name, safe='')}/close")
+
+    def move_car(self, name, destination):
+        """POST /api/v1/car/{name}/goto/{destination} (201, empty body). Returns None.
+
+        destination: a parking spot name, "exit" or "leavepark".
+        Sending a car to an occupied spot may cause a penalty.
+        """
+        self.call(
+            "POST",
+            f"/api/v1/car/{quote(name, safe='')}/goto/{quote(destination, safe='')}",
+        )
