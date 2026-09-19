@@ -63,6 +63,7 @@ class FakeClient:
 
     def charge_car(self, plate, parking_cost, charging_cost):
         self.charged.append((plate, parking_cost, charging_cost))
+        self.actions.append(("charge", plate, parking_cost, charging_cost))
 
 
 def entry_event(plate="RFB 098", minutes="1"):
@@ -110,6 +111,24 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.client.moved, [])
         self.assertEqual(self.flow.cars["RFB 098"]["stage"], car_flow.WAITING)
 
+    def test_charge_is_sent_before_exit_gate_close_command(self):
+        self.flow.handle_event(entry_event())
+        plate = "RFB 098"
+        spot = self.flow.cars[plate]["spot"]
+        for direction in ("CarIn", "CarOut"):
+            self.flow.handle_event({"EventClass": "car_spot_action", "CarPlateNumber": plate,
+                                    "SpotName": spot, "SpotType": "Park", "Direction": direction,
+                                    "EventId": f"order-{direction}", "ServerDateTime": NOW})
+        self.client.actions.clear()
+        self.flow.handle_event({"EventClass": "car_spot_action", "CarPlateNumber": plate,
+                                "SpotName": "EXIT_EXIT", "SpotType": "ExitSpot",
+                                "Direction": "CarIn", "EventId": "order-exit",
+                                "ServerDateTime": NOW})
+        kinds = [action[0] for action in self.client.actions]
+        self.assertIn("charge", kinds)
+        self.assertIn("close", kinds)
+        self.assertLess(kinds.index("charge"), kinds.index("close"))
+
     def test_exit_gate_is_opened_when_a_car_reaches_the_exit(self):
         self.flow.handle_event(entry_event())
         plate = "RFB 098"
@@ -122,7 +141,8 @@ class GateTests(unittest.TestCase):
         self.flow.handle_event({"EventClass": "car_spot_action", "CarPlateNumber": plate,
                                 "SpotName": "EXIT_EXIT", "SpotType": "ExitSpot",
                                 "Direction": "CarIn", "EventId": "x1", "ServerDateTime": NOW})
-        self.assertIn("gateB", self.client.opened)
+        self.assertNotIn("gateB", self.client.opened)
+        self.assertIn("gateB", self.client.closed)
 
     def test_gate_names_are_configurable(self):
         self.assertEqual(car_flow.ENTRY_GATES, ["gateA"])
@@ -368,6 +388,7 @@ class DepartureTests(unittest.TestCase):
                                 "EventId": "pay1", "ServerDateTime": NOW})
         self.assertTrue(car["paid"])
         self.assertEqual(car["stage"], DONE)
+        self.assertIn("gateB", self.client.opened)
         self.assertIn((plate, "leavepark"), self.client.moved)
 
     def test_a_wrong_payment_does_not_authorise_departure(self):
