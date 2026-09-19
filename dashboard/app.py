@@ -63,7 +63,7 @@ def load_history(date):
     """All visits of one past day. Mock: from the fake archive. API: GET /api/history?date=..."""
     try:
         if data_source.mode() == "db":
-            return []  # the 30-day archive is not built from the database yet
+            return data_source.fetch_db_history(date)
         if data_source.mode() == "api":
             return _api_history(data_source.api_url(), date)
         return get_world().history(date)
@@ -215,8 +215,10 @@ def board():
                     unsafe_allow_html=True)
         st.markdown(ui.co_block(snap["zones"]), unsafe_allow_html=True)
         st.markdown(ui.gates_block(snap["gates"], snap["fans"]), unsafe_allow_html=True)
-        if data_source.mode() == "db" and not snap["gates"]:
-            st.caption("Gate status: unavailable, awaiting live gate synchronisation. Fans and CO are not recorded in the database.")
+        if data_source.mode() == "db":
+            notes = [] if snap["gates"] else ["Gate status: unavailable, awaiting live gate synchronisation."]
+            notes.append("Exhaust fans and carbon monoxide are not recorded in the database.")
+            st.caption(" ".join(notes))
 
     h = snap["history"]
     c1, c2, c3 = st.columns(3, gap="medium")

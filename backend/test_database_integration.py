@@ -86,6 +86,40 @@ class SyncTests(DbTestCase):
         self.assertEqual([s["name"] for s in service.get_parking_spots()], ["S1", "S2"])
         self.assertEqual(self.client.calls, [])  # read-only, no commands
 
+    def test_sync_stores_gates_and_tolerates_unknown_field_names(self):
+        self.client.barriers = [
+            {"name": "gate0", "state": "Open", "broken": False, "isUnderMaintenance": False},
+            {"Name": "gate1", "Status": "Closed", "isBroken": True},   # other spelling
+            {"name": "gate2"},                                          # state missing
+            {"noname": "?"},                                            # skipped, logged
+        ]
+        self.adapter.sync(self.client)
+        gates = {g["name"]: g for g in service.get_gates()}
+        self.assertEqual(set(gates), {"gate0", "gate1", "gate2"})
+        self.assertEqual(gates["gate0"]["state"], "Open")
+        self.assertEqual((gates["gate1"]["state"], gates["gate1"]["broken"]), ("Closed", 1))
+        self.assertEqual(gates["gate2"]["state"], "Closed")  # documented default
+
+    def test_a_broken_list_barriers_never_costs_us_the_spot_sync(self):
+        class NoBarriers:
+            spots = self.client.spots
+
+            def list_parking_spots(self):
+                return self.spots
+
+        with self.assertLogs("database_adapter", "ERROR"):
+            self.adapter.sync(NoBarriers())
+        self.assertEqual([s["name"] for s in service.get_parking_spots()], ["S1", "S2"])
+
+    def test_unknown_spots_are_added_without_overwriting_live_state(self):
+        self.adapter.sync_spots([sim_spot("S1")])
+        self.enter()
+        self.park_in()  # S1 is now occupied by PLATE
+        self.adapter.sync_new_spots([sim_spot("S1"), sim_spot("S9", zone="ZONE2")])
+        s1, s9 = spot_row("S1"), spot_row("S9")
+        self.assertEqual((s1["status"], s1["current_car"]), ("occupied", PLATE))  # untouched
+        self.assertEqual((s9["zone"], s9["purpose"]), ("ZONE2", "Park"))          # added
+
 
 class SessionTests(DbTestCase):
     def test_arrival_creates_active_session_and_remembers_id(self):
@@ -127,6 +161,32 @@ class SessionTests(DbTestCase):
         self.assertEqual(session["departure_time"], "2026-09-19T14:10:00")
 
 
+class RecoveryTests(DbTestCase):
+    """The failure modes that used to reach the dashboard silently."""
+
+    def test_spots_are_stored_as_park_even_if_the_startup_sync_never_ran(self):
+        # No sync() at all: the simulator was unreachable when the backend started.
+        self.client.spots = [sim_spot("S1"), sim_spot("S2")]
+        self.enter()
+        self.park_in()
+        row = spot_row("S1")
+        # purpose used to be NULL here, which hid the spot from the parking map.
+        self.assertEqual(row["purpose"], "Park")
+        self.assertEqual(row["zone"], "ZONE1")
+        self.assertEqual((row["status"], row["current_car"]), ("occupied", PLATE))
+
+    def test_a_car_that_never_parks_is_charged_and_frees_the_spot_it_held(self):
+        self.enter()
+        self.send("EXIT1", "ExitSpot", "CarIn", PLATE, "Normal", T_OUT)  # no Park events
+        self.assertEqual(self.car()["stage"], car_flow.CHARGING)
+        self.assertEqual(self.client.of("charge_car"), [("charge_car", PLATE, 10.0, 0)])
+
+        # The spot it was sent to but never used is available for the next car.
+        self.enter("BBB 222")
+        self.assertIn(("move_car", "BBB 222", "S1"), self.client.calls)
+        self.assertEqual(spot_row("S1")["status"], "available")
+
+
 class PaymentTests(DbTestCase):
     def test_charge_is_recorded_as_pending(self):
         self.to_charging()
@@ -137,10 +197,13 @@ class PaymentTests(DbTestCase):
         self.assertEqual((rows[0]["parking_cost"], rows[0]["charging_cost"]), (10.0, 0))
         self.assertEqual((rows[0]["status"], rows[0]["paid_at"]), ("pending", None))
 
-    def test_payment_stays_pending_with_default_amount_check(self):
+    def test_payment_is_marked_paid_with_the_default_amount_check(self):
         self.to_charging()
         self.payment()
-        self.assertEqual(payments()[0]["status"], "pending")
+        row = payments()[0]
+        self.assertEqual(row["status"], "paid")
+        # paid_at uses the simulator's clock, like the session timestamps.
+        self.assertEqual(row["paid_at"], "2026-09-19T14:00:00")
 
     def test_valid_payment_marks_paid_once(self):
         self.use_valid_payments()
@@ -167,7 +230,7 @@ class PaymentTests(DbTestCase):
     def test_electric_charge_amounts_stored(self):
         self.to_charging("EV 123", "Electric")
         row = payments()[0]
-        self.assertEqual((row["parking_cost"], row["charging_cost"]), (10.0, 10.0))
+        self.assertEqual((row["parking_cost"], row["charging_cost"]), (10.0, 20.0))
 
 
 class EventLogTests(DbTestCase):

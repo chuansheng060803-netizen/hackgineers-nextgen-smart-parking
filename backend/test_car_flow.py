@@ -28,13 +28,17 @@ def spot(name, car_type="Any", detected_cars=0):
 class FakeClient:
     """Records commands; can be told to fail like the real client would."""
 
-    def __init__(self, spots):
+    def __init__(self, spots, barriers=None):
         self.spots = spots
+        self.barriers = barriers if barriers is not None else []
         self.calls = []
         self.fail = set()  # method names that raise SimulatorError
 
     def list_parking_spots(self):
         return self.spots
+
+    def list_barriers(self):
+        return self.barriers
 
     def move_car(self, name, destination):
         if "move_car" in self.fail:
@@ -237,12 +241,12 @@ class ExitAndChargeTests(FlowTestCase):
 
     def test_charge_at_exit_electric_car(self):
         self.to_charging("EV 123", "Electric")
-        self.assertEqual(self.client.of("charge_car"), [("charge_car", "EV 123", 10.0, 10.0)])
+        self.assertEqual(self.client.of("charge_car"), [("charge_car", "EV 123", 10.0, 20.0)])
 
     def test_requested_costs_stored_separately(self):
         self.to_charging("EV 123", "Electric")
         self.assertEqual(self.car("EV 123")["parking_cost"], 10.0)
-        self.assertEqual(self.car("EV 123")["charging_cost"], 10.0)
+        self.assertEqual(self.car("EV 123")["charging_cost"], 20.0)
 
     def test_repeated_exit_event_does_not_charge_twice(self):
         self.to_charging()
@@ -251,7 +255,16 @@ class ExitAndChargeTests(FlowTestCase):
 
 
 class PaymentTests(FlowTestCase):
-    def test_payment_rejected_by_default_and_no_leavepark(self):
+    def test_default_accepts_any_amount_and_sends_leavepark(self):
+        self.to_charging()
+        self.payment()
+        self.assertTrue(self.car()["paid"])
+        self.assertEqual(self.client.calls.count(("move_car", PLATE, "leavepark")), 1)
+        self.assertEqual(self.car()["stage"], car_flow.DONE)
+
+    def test_stricter_amount_check_can_still_refuse(self):
+        """amount_check stays injectable: a strict rule blocks departure again."""
+        self.flow = CarFlow(self.client, amount_check=lambda event, car: False)
         self.to_charging()
         self.payment()
         self.assertFalse(self.car()["paid"])

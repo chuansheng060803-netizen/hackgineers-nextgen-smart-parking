@@ -115,9 +115,8 @@ class LifecycleTests(SnapshotTestCase):
         self.assertEqual(self.spot_row(snap, "S1")["state"], "available")
         self.assertEqual(len(snap["cars"]), 1)  # still inside, on its way out
 
-    def test_pending_payment_shows_estimate_but_no_income(self):
-        self.to_charging()
-        self.payment()  # default check is fail-closed: stays pending
+    def test_charged_but_unpaid_shows_estimate_but_no_income(self):
+        self.to_charging()  # charge sent, no payment_made has arrived yet
         snap = self.snap()
         self.assertEqual(self.car_row(snap)["estimated_charge"], 10.0)
         self.assertEqual(snap["stats"]["revenue"], 0.0)
@@ -156,6 +155,33 @@ class LifecycleTests(SnapshotTestCase):
         self.assertEqual(events[1]["kind"], "payment")
         self.assertIn("10.0", events[1]["text"])
         self.assertEqual(self.snap()["stats"]["penalty_count"], 1)
+
+
+class HistoryTests(SnapshotTestCase):
+    def setUp(self):
+        super().setUp()
+        self.use_valid_payments()
+        self.to_charging()
+        self.payment()
+        self.leave_exit()
+
+    def test_occupancy_is_derived_from_session_timestamps(self):
+        occupancy = self.snap()["history"]["occupancy"]
+        self.assertEqual(len(occupancy), 12)
+        self.assertTrue(all(r["total"] == 2 for r in occupancy))
+        # arrived 14:00, left 14:10 -> counted in the 14:00 and 14:05 samples only
+        self.assertEqual([r["occupied"] for r in occupancy], [0] * 9 + [1, 1, 0])
+
+    def test_archive_summarises_the_day(self):
+        self.assertEqual(self.snap()["archive"], [{
+            "date": "2026-09-19", "visits": 1, "cars_parked": 1, "drive_through": 0,
+            "income": 10.0, "penalties": 0, "peak_pct": 50, "avg_minutes": 10.0}])
+
+    def test_history_lists_the_visits_of_one_day(self):
+        day = db_source.history("2026-09-19")
+        self.assertEqual([r["plate"] for r in day], [PLATE])
+        self.assertEqual(day[0]["status"], "Completed - paid")
+        self.assertEqual(db_source.history("2026-09-18"), [])
 
 
 class GateTests(SnapshotTestCase):

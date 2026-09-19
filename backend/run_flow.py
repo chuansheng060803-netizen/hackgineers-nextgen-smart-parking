@@ -23,6 +23,9 @@ class DryRunClient:
     def list_parking_spots(self):
         return self._real.list_parking_spots()
 
+    def list_barriers(self):
+        return self._real.list_barriers()
+
     def move_car(self, name, destination):
         logger.info("[DRY RUN] would move_car(%r, %r)", name, destination)
 

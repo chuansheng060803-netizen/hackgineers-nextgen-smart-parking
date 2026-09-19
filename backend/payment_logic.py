@@ -2,7 +2,7 @@ def calculate_charges(car_type, minutes_parked):
     parking_cost = minutes_parked
 
     if car_type == "Electric":
-        charging_cost = minutes_parked
+        charging_cost = minutes_parked * 2
     else:
         charging_cost = 0
 

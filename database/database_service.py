@@ -3,14 +3,20 @@ import hashlib
 import hmac
 import secrets
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from database.database import get_connection
 
 
 def _now():
-    """Return the current UTC time as an ISO formatted string."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Return the current local time as an ISO formatted string.
+
+    Deliberately naive (no "+00:00" offset): simulator timestamps are naive
+    too, and mixing the two in one column made rows silently compare as if
+    they shared a clock. Callers that know the simulator's time pass it in
+    instead of relying on this fallback.
+    """
+    return datetime.now().isoformat(timespec="seconds")
 
 
 # =========================================================
@@ -563,7 +569,11 @@ def log_event(
     payload,
     car_name=None,
     component_name=None,
+    created_at=None,
 ):
+    if created_at is None:
+        created_at = _now()
+
     payload_json = json.dumps(payload)
 
     connection = get_connection()
@@ -585,7 +595,7 @@ def log_event(
                 car_name,
                 component_name,
                 payload_json,
-                _now(),
+                created_at,
             ),
         )
 

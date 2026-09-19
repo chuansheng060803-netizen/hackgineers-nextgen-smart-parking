@@ -10,6 +10,7 @@ Documented car lifecycle:
 """
 import logging
 import threading
+from collections import deque
 from datetime import datetime
 
 from parking_algorithm import select_parking_spot
@@ -27,6 +28,10 @@ CHARGING = "CHARGING"    # charge_car() sent, waiting for a valid payment_made
 DONE = "DONE"            # valid payment received and leavepark sent
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# How many EventIds to remember for duplicate detection. Old ids are forgotten
+# oldest-first so a long run cannot grow this without bound.
+MAX_REMEMBERED_EVENTS = 10_000
 
 
 def verify_signature(event):
@@ -46,12 +51,17 @@ def verify_signature(event):
 def amount_is_valid(event, car):
     """Is payment_made.Amount the amount we expect for this car?
 
-    NOT IMPLEMENTED on purpose: what Amount represents is not confirmed, so
-    this fails closed (no payment is accepted, leavepark is never sent).
-    The requested amounts are stored as car["parking_cost"] and
-    car["charging_cost"] for when this is decided.
+    What Amount represents is still not confirmed, so this deliberately does
+    NOT compare it: any payment_made for a car that is waiting to pay counts.
+    validate_payment still enforces the checks that hold either way (the car
+    is known, it is in CHARGING and has not already paid), so a stray or
+    repeated event cannot release a car twice.
+
+    The amounts we asked for stay on the car as car["parking_cost"] and
+    car["charging_cost"]; pass a stricter amount_check to CarFlow once the
+    meaning of Amount is confirmed.
     """
-    return False
+    return True
 
 
 def validate_payment(event, car, amount_check=amount_is_valid):
@@ -83,6 +93,7 @@ class CarFlow:
         self.db = db  # optional DatabaseAdapter; None = no persistence
         self.cars = {}  # plate -> state dict
         self._seen_event_ids = set()
+        self._seen_event_order = deque()  # same ids, oldest first, for eviction
         self._last_sequence_id = None
         self._lock = threading.RLock()
 
@@ -136,6 +147,9 @@ class CarFlow:
                 logger.info("Duplicate event %s ignored", event_id)
                 return False
             self._seen_event_ids.add(event_id)
+            self._seen_event_order.append(event_id)
+            if len(self._seen_event_order) > MAX_REMEMBERED_EVENTS:
+                self._seen_event_ids.discard(self._seen_event_order.popleft())
 
         sequence_id = event.get("SequenceId")
         if isinstance(sequence_id, int):
@@ -222,6 +236,10 @@ class CarFlow:
         except SimulatorError as e:
             logger.error("list_parking_spots failed: %s", e)
             return
+        # Store any spot the database has not seen yet. This is what makes the
+        # dashboard survive a failed startup sync (the simulator being briefly
+        # unreachable): the spots arrive with the first car instead of never.
+        self._db("sync_new_spots", spots)
         # detectedCars is empty until a car arrives, so skip spots we already assigned.
         reserved = {c["spot"] for c in self.cars.values()
                     if c["spot"] and c["parked_out_time"] is None}
@@ -243,6 +261,13 @@ class CarFlow:
         car["exit_in_time"] = when
         if car["stage"] in (CHARGING, DONE):
             return  # duplicate; never charge twice
+        # A car at the exit is not sitting in a parking spot any more, even if we
+        # never saw it park (a drive-through, or a missed Park CarOut event).
+        # Releasing the reservation here stops it holding a spot it never used.
+        if car["parked_out_time"] is None:
+            car["parked_out_time"] = when
+            if car["spot"]:
+                self._db("set_spot_available", car["spot"])
         car["stage"] = AT_EXIT
         self._charge(car)
 
@@ -250,7 +275,12 @@ class CarFlow:
         # PROVISIONAL (open question 1): which timestamps define the charged
         # minutes is not confirmed. All event times are stored on the car, so
         # changing this is a one-line switch.
-        return car["parked_in_time"], car["parked_out_time"]
+        # A car that never parked (drove straight through) has no parked_in_time,
+        # so fall back to the time it entered: without this it can never be
+        # charged, stays AT_EXIT and is retried on every later event.
+        start = car["parked_in_time"] or car["entry_in_time"]
+        end = car["parked_out_time"] or car["exit_in_time"]
+        return start, end
 
     def _charge(self, car):
         start, end = self._billing_period(car)
@@ -287,7 +317,8 @@ class CarFlow:
             return
         car["paid"] = True
         if car["payment_id"] is not None:
-            self._db("mark_payment_paid", car["payment_id"])
+            # Simulator time, so paid_at matches the session timestamps.
+            self._db("mark_payment_paid", car["payment_id"], _parse_time(event))
         if get_post_payment_action(True) == "ALLOW_DEPARTURE":
             self._leavepark(car)
 

@@ -18,6 +18,8 @@ import database.database as database_module  # noqa: E402
 from database import database_service as service  # noqa: E402
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+MAX_SESSIONS = 5000     # how far back the history and the 30-day archive look
+ARCHIVE_DAYS = 30       # the organisers' retention window
 
 
 class DatabaseNotFound(Exception):
@@ -98,6 +100,94 @@ def _arrivals(sessions, now):
              "count": counts.get(start + timedelta(minutes=5 * i), 0)} for i in range(12)]
 
 
+def _occupancy(sessions, now, total):
+    """Cars inside, sampled every 5 minutes over the last hour (simulator time).
+
+    Derived from the session timestamps rather than stored samples: a car counts
+    from the moment it arrived until its session was completed.
+    """
+    if now is None or not total:
+        return []
+    start = now.replace(second=0, microsecond=0, minute=(now.minute // 5) * 5) - timedelta(minutes=55)
+    spans = [(a, _parse(s["departure_time"]))
+             for s, a in ((s, _parse(s["arrival_time"])) for s in sessions) if a]
+    rows = []
+    for i in range(12):
+        t = start + timedelta(minutes=5 * i)
+        inside = sum(1 for a, d in spans if a <= t and (d is None or d > t))
+        rows.append({"t": t.isoformat(timespec="seconds"), "occupied": inside, "total": total})
+    return rows
+
+
+def _visit(session, arrived, payments):
+    """One row for the History tables, in the shape the dashboard expects."""
+    left = _parse(session["departure_time"])
+    payment = payments.get(session["id"])
+    if session["status"] == "active":
+        status = "Inside"
+    elif not payment:
+        status = "Completed"
+    else:
+        status = "Completed - paid" if payment["status"] == "paid" else "Completed - payment pending"
+    return {"plate": session["car_name"], "car_type": session["car_type"],
+            "spot": session["spot_name"] or "-",
+            "entered_at": _fmt(arrived), "left_at": _fmt(left),
+            "minutes": round((left - arrived).total_seconds() / 60.0, 1) if arrived and left else 0.0,
+            "charge": round(payment["total"], 2) if payment else 0.0,
+            "status": status}
+
+
+def _archive(sessions, payments, events, total):
+    """One summary row per day, newest first, for the 30-day history view."""
+    by_day = {}
+    for session in sessions:
+        arrived = _parse(session["arrival_time"])
+        if arrived:
+            by_day.setdefault(arrived.date(), []).append((session, arrived))
+
+    penalties = {}
+    for event in events:
+        if event.get("event_type") == "penalty":
+            when = _parse((event.get("payload") or {}).get("ServerDateTime")) or _parse(event.get("created_at"))
+            if when:
+                penalties[when.date()] = penalties.get(when.date(), 0) + 1
+
+    rows = []
+    for day in sorted(by_day, reverse=True)[:ARCHIVE_DAYS]:
+        items = by_day[day]
+        parked = [s for s, _ in items if s["parked_time"]]
+        income = sum(payments[s["id"]]["total"] for s, _ in items
+                     if payments.get(s["id"], {}).get("status") == "paid")
+        edges, minutes = [], []
+        for session, arrived in items:
+            left = _parse(session["departure_time"])
+            edges.append((arrived, 1))
+            if left:
+                edges.append((left, -1))
+                minutes.append((left - arrived).total_seconds() / 60.0)
+        level = peak = 0
+        for _, delta in sorted(edges):    # a departure at the same instant lands first
+            level += delta
+            peak = max(peak, level)
+        rows.append({"date": day.isoformat(), "visits": len(items), "cars_parked": len(parked),
+                     "drive_through": len(items) - len(parked), "income": round(income, 2),
+                     "penalties": penalties.get(day, 0),
+                     "peak_pct": min(100, round(100 * peak / total)) if total else 0,
+                     "avg_minutes": round(sum(minutes) / len(minutes), 1) if minutes else 0.0})
+    return rows
+
+
+def history(date):
+    """Every visit of one day, for the dashboard's 30-day view. date: 'YYYY-MM-DD'."""
+    payments = _payment_summary(service.get_payments())
+    rows = []
+    for session in service.get_sessions(limit=MAX_SESSIONS):
+        arrived = _parse(session["arrival_time"])
+        if arrived and arrived.date().isoformat() == str(date):
+            rows.append(_visit(session, arrived, payments))
+    return rows
+
+
 def fetch_db():
     path = Path(database_module.DATABASE_PATH)
     if not path.exists():
@@ -105,8 +195,9 @@ def fetch_db():
 
     spot_rows = service.get_parking_spots()
     gate_rows = service.get_gates()
-    active = service.get_active_sessions()
-    finished = service.get_sessions(status="completed")
+    all_sessions = service.get_sessions(limit=MAX_SESSIONS)
+    active = [s for s in all_sessions if s["status"] == "active"]
+    finished = [s for s in all_sessions if s["status"] == "completed"]
     payments = _payment_summary(service.get_payments())
     events = service.get_recent_events(limit=1000)
 
@@ -145,16 +236,7 @@ def fetch_db():
                      "flag": None, "assigned_spot": None})
     cars.sort(key=lambda c: c["entered_at"], reverse=True)
 
-    sessions = []
-    for s in finished:
-        arrived, left = _parse(s["arrival_time"]), _parse(s["departure_time"])
-        payment = payments.get(s["id"])
-        sessions.append({"plate": s["car_name"], "car_type": s["car_type"], "spot": s["spot_name"] or "-",
-                         "entered_at": _fmt(arrived), "left_at": _fmt(left),
-                         "minutes": round((left - arrived).total_seconds() / 60.0, 1) if arrived and left else 0.0,
-                         "charge": round(payment["total"], 2) if payment else 0.0,
-                         "status": "Completed" if not payment else
-                                   "Completed - paid" if payment["status"] == "paid" else "Completed - payment pending"})
+    sessions = [_visit(s, _parse(s["arrival_time"]), payments) for s in finished]
 
     revenue = sum(p["total"] for p in payments.values() if p["status"] == "paid")
 
@@ -168,7 +250,9 @@ def fetch_db():
         "gates": [{"name": g["name"], "state": g["state"], "role": "", "zone": "",
                    "health": "broken" if g["broken"] else "maintenance" if g["under_maintenance"] else "ok"}
                   for g in gate_rows],
-        "history": {"arrivals": _arrivals(active + finished, now)},
+        "archive": _archive(all_sessions, payments, events, len(spots)),
+        "history": {"arrivals": _arrivals(all_sessions, now),
+                    "occupancy": _occupancy(all_sessions, now, len(spots))},
         "stats": {"revenue": round(revenue, 2), "cars_served": len(finished),
                   "penalty_count": sum(1 for e in events if e.get("event_type") == "penalty")},
     }

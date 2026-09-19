@@ -37,6 +37,12 @@ def fetch_db():
     return normalise(db_source.fetch_db())
 
 
+def fetch_db_history(date):
+    """All visits of one past day, read from the database."""
+    import db_source
+    return db_source.history(date)
+
+
 def fetch_history(url, date, timeout=5):
     """All visits of one past day: GET {url}/api/history?date=YYYY-MM-DD  ->  [{plate, car_type, spot, entered_at, left_at, minutes, charge, status}]"""
     r = requests.get(url.rstrip("/") + "/api/history", params={"date": date}, timeout=timeout)
