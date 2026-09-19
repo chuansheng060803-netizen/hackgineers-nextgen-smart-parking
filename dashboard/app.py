@@ -69,6 +69,56 @@ def load_history(date):
         return []
 
 
+def do_control(kind, name, action, role):
+    """Runs when an operator button is pressed. Mock: changes the fake car park. API: POST /api/control/..."""
+    ss = st.session_state
+    try:
+        if data_source.mode() == "api":
+            res = data_source.send_control(data_source.api_url(), kind, name, action, role)
+        else:
+            res = get_world().control(kind, name, action, role)
+    except Exception as exc:  # noqa: BLE001
+        res = {"ok": False, "message": f"Could not reach the backend: {exc}"}
+    now = dt.datetime.now()
+    ss["ctl_msg"] = {**res, "at": now}
+    ss["ctl_log"] = ([{"Time": now.strftime("%H:%M:%S"), "Role": role, "Target": name, "Action": action,
+                       "Result": "OK" if res.get("ok") else "Refused", "Message": res.get("message", "")}] + ss.get("ctl_log", []))[:100]
+
+
+def controls_card(snap, role):
+    with st.container(border=True):
+        st.markdown(ui.card_title("Manual controls", f"signed in as {role}"), unsafe_allow_html=True)
+        if role == "Viewer":
+            st.caption("Read-only. Sign in as Operator or Admin (left sidebar) to open or close gates and control the fans.")
+            return
+        msg = st.session_state.get("ctl_msg")
+        if msg and (dt.datetime.now() - msg["at"]).total_seconds() < 20:
+            (st.success if msg.get("ok") else st.warning)(msg.get("message", ""))
+        for g in snap["gates"]:
+            health, is_open = g.get("health", "ok"), g.get("state") == "Open"
+            note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(health, "")
+            st.markdown(f"**{g['name']}** {g.get('role') or ''} · {g.get('state') or '?'}{note}")
+            b1, b2, b3 = st.columns(3)
+            b1.button("Open", key=f"c_{g['name']}_open", width="stretch", disabled=health != "ok" or is_open,
+                      on_click=do_control, args=("gate", g["name"], "open", role))
+            b2.button("Close", key=f"c_{g['name']}_close", width="stretch", disabled=health != "ok" or not is_open,
+                      on_click=do_control, args=("gate", g["name"], "close", role))
+            b3.button("Repair", key=f"c_{g['name']}_repair", width="stretch", disabled=health != "broken",
+                      on_click=do_control, args=("gate", g["name"], "repair", role))
+        with st.expander(f"Exhaust fans ({len(snap['fans'])})"):
+            for f in snap["fans"]:
+                health = f.get("health", "ok")
+                mode = "manual" if f.get("manual") else "automatic"
+                note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(health, f" · {'running' if f.get('on') else 'off'}, {mode}")
+                st.markdown(f"**{f['name']}** {f.get('zone', '')}{note}")
+                b1, b2, b3, b4 = st.columns(4)
+                for col, label, act in [(b1, "On", "on"), (b2, "Off", "off"), (b3, "Auto", "auto")]:
+                    col.button(label, key=f"c_{f['name']}_{act}", width="stretch", disabled=health != "ok",
+                               on_click=do_control, args=("fan", f["name"], act, role))
+                b4.button("Repair", key=f"c_{f['name']}_repair", width="stretch", disabled=health != "broken",
+                          on_click=do_control, args=("fan", f["name"], "repair", role))
+
+
 def load_snapshot():
     """Returns (snapshot, error_text). On failure keeps showing the last good snapshot."""
     ss = st.session_state
@@ -88,13 +138,15 @@ def load_snapshot():
 with st.sidebar:
     st.markdown("### Controls")
     st.selectbox("Theme", ["Match browser", "Dark", "Light"], key="theme_choice")
+    st.selectbox("Signed in as", ["Viewer", "Operator", "Admin"], index=1, key="role")
+    st.caption("Demo sign-in. The real login comes from the database/authentication teammate.")
     st.select_slider("Refresh every (seconds)", options=[1, 2, 3, 5, 10], value=2, key="refresh_s")
     st.caption(f"Data source: **{data_source.mode()}**" + (f" ({data_source.api_url()})" if data_source.mode() == "api" else ""))
     if data_source.mode() != "api":
         st.markdown("#### Demo the challenges")
         st.caption("Mock data only. Each button forces one scenario from the brief.")
         for label, key in [("Traffic surge", "surge"), ("CO buildup (ZONE2)", "co"), ("Entrance gate breaks", "gate"),
-                           ("Rogue car", "rogue"), ("Reset demo", "reset")]:
+                           ("Exhaust fan breaks (ZONE2)", "fan"),                            ("Rogue car", "rogue"), ("Reset demo", "reset")]:
             st.button(label, key=f"btn_{key}", width="stretch", on_click=lambda k=key: get_world().trigger(k))
 
 # ------------------------------------------------------------------ main (auto-refreshing fragment)
@@ -125,7 +177,10 @@ def board():
     left, right = st.columns([2.1, 1], gap="medium")
     with left:
         st.markdown(ui.parking_map(spots), unsafe_allow_html=True)
+        controls_card(snap, st.session_state.get("role", "Operator"))
     with right:
+        st.markdown(ui.system_block(snap.get("source", "?"), not err, snap.get("generated_at"), spots, snap["gates"], snap["fans"], alerts),
+                    unsafe_allow_html=True)
         st.markdown(ui.co_block(snap["zones"]), unsafe_allow_html=True)
         st.markdown(ui.gates_block(snap["gates"], snap["fans"]), unsafe_allow_html=True)
 
@@ -201,6 +256,13 @@ def board():
         a.caption("Occupancy"); a.dataframe(occ, hide_index=True, width="stretch")
         b.caption("Carbon monoxide"); b.dataframe(co, hide_index=True, width="stretch")
         c.caption("Arrivals"); c.dataframe(arr, hide_index=True, width="stretch")
+    if st.session_state.get("role") == "Admin":
+        with st.expander(f"Control log ({len(st.session_state.get('ctl_log', []))} actions this session)"):
+            log = st.session_state.get("ctl_log", [])
+            if log:
+                st.dataframe(pd.DataFrame(log), hide_index=True, width="stretch")
+            else:
+                st.caption("No manual control actions yet.")
     if snap.get("penalties"):
         with st.expander(f"Penalties ({snap['stats']['penalty_count']})"):
             st.dataframe(pd.DataFrame(snap["penalties"]), hide_index=True, width="stretch")

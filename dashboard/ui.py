@@ -144,6 +144,8 @@ def gates_block(gates, fans):
     for f in fans:
         health = f.get("health", "ok")
         pills = _pill("Running" if f.get("on") else "Off", "good" if f.get("on") else "")
+        if f.get("manual"):
+            pills += _pill("Manual", "warn")
         if health == "broken":
             pills += _pill("Broken", "crit", ICON["x"])
         elif health == "maintenance":
@@ -152,6 +154,21 @@ def gates_block(gates, fans):
                     f'<div class="right">{pills}</div></div>')
     body = "".join(rows) or '<div class="pk-empty">No components reported yet.</div>'
     return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">Gates and fans</span></div>{body}</div></div>'
+
+
+def system_block(source, ok, updated, spots, gates, fans, alerts):
+    parts = list(gates) + list(fans)
+    bad = [c for c in parts if c.get("health", "ok") != "ok"]
+    crit = sum(1 for a in alerts if a.get("severity") == "critical")
+    conn = _pill("Online", "good") if ok else _pill("Not answering", "crit", ICON["x"])
+    comp = _pill(f"{len(parts) - len(bad)} of {len(parts)} working", "good" if not bad else "crit" if any(c.get("health") == "broken" for c in bad) else "warn")
+    broken_spots = sum(1 for p in spots if p.get("state") in ("broken", "maintenance"))
+    spot_pill = _pill("All working" if not broken_spots else f"{broken_spots} out of service", "good" if not broken_spots else "warn")
+    al = _pill("None" if not alerts else f"{len(alerts)} active" + (f" ({crit} critical)" if crit else ""), "good" if not alerts else "crit" if crit else "warn")
+    rows = [("Data source", _pill(source)), ("Connection", conn), ("Last update", _pill(updated or "-")),
+            ("Gates and fans", comp), ("Parking spots", spot_pill), ("Alerts", al)]
+    body = "".join(f'<div class="pk-row"><span class="nm">{e(k)}</span><div class="right">{v}</div></div>' for k, v in rows)
+    return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">System status</span></div>{body}</div></div>'
 
 
 def co_block(zones, scale=150.0):

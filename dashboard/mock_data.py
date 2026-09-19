@@ -48,6 +48,7 @@ class MockWorld:
         self.lock = threading.RLock()
         self.speed = 1.0
         self._accum = 0.0
+        self.repairs = {}                            # component name -> sim time its repair ends
         self.until = {}                              # scenario name -> sim time it ends
         self.gate_break_at = None
         self.co_started = None
@@ -87,7 +88,7 @@ class MockWorld:
             {"name": "gate0", "zone": "", "role": "Entrance", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
             {"name": "gate1", "zone": "", "role": "Exit", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
         ]
-        self.fans = [{"name": f"fan{i}", "zone": z, "on": False, "health": "ok", "hours": 0.0}
+        self.fans = [{"name": f"fan{i}", "zone": z, "on": False, "health": "ok", "manual": None, "hours": 0.0}
                      for i, z in enumerate(ZONES)]
         self.co = {z: 8.0 for z in ZONES}
         self.co_extra = {z: 0.0 for z in ZONES}
@@ -144,6 +145,7 @@ class MockWorld:
         self._gates_and_fans()
         self._co()
         self._scenarios()
+        self._finish_repairs()
         if self.now >= self._next_sample:
             self._next_sample = self.now + dt.timedelta(seconds=30)
             occupied = sum(1 for s in self.spots.values() if s["state"] in ("occupied", "reserved"))
@@ -221,7 +223,11 @@ class MockWorld:
             if f["health"] != "ok":
                 f["on"] = False
                 continue
-            if self.co[z] >= CO_MID and not f["on"]:
+            if f.get("manual") == "on":                # an operator took over the fan
+                f["on"] = True
+            elif f.get("manual") == "off":
+                f["on"] = False
+            elif self.co[z] >= CO_MID and not f["on"]:
                 f["on"] = True
                 self._log("component", f"Exhaust fan {f['name']} switched on ({z})")
             elif self.co[z] < 40 and f["on"]:
@@ -270,6 +276,15 @@ class MockWorld:
         for plate in [p for p in list(self.until) if p.startswith("rogue:")]:
             if plate[6:] not in self.cars:
                 del self.until[plate]
+
+    def _finish_repairs(self):
+        for name, ends in list(self.repairs.items()):
+            if self.now >= ends:
+                comp = next((c for c in self.gates + self.fans if c["name"] == name), None)
+                if comp:
+                    comp["health"] = "ok"
+                    self._log("component", f"{name} repaired and back in service")
+                del self.repairs[name]
 
     def _visit_row(self, car, spot, charge, status):
         return {"plate": car["plate"], "car_type": car["type"], "spot": spot,
@@ -328,6 +343,44 @@ class MockWorld:
                 "income": round(self.revenue, 2), "penalties": len(self.penalties), "peak_pct": round(max(peaks)) if peaks else 0,
                 "avg_minutes": round(sum(r["minutes"] for r in done) / max(1, len(done)), 1)}
 
+    def control(self, kind, name, action, role="operator"):
+        """Manual control from the dashboard buttons. Follows the organisers' rules: never operate a component that is
+        broken or under repair. Returns {"ok": bool, "message": str}."""
+        with self.lock:
+            role = str(role).lower()
+            if role not in ("operator", "admin"):
+                return {"ok": False, "message": "Only an Operator or an Admin can control components."}
+            comp = next((c for c in (self.gates if kind == "gate" else self.fans if kind == "fan" else []) if c["name"] == name), None)
+            if comp is None:
+                return {"ok": False, "message": f"Unknown {kind} '{name}'."}
+            who = role.capitalize()
+            if action == "repair":
+                if comp["health"] == "maintenance":
+                    return {"ok": False, "message": f"{name} is already being repaired."}
+                if comp["health"] != "broken":
+                    return {"ok": False, "message": f"{name} is working, nothing to repair."}
+                comp["health"] = "maintenance"
+                self.repairs[name] = self.now + dt.timedelta(seconds=20)
+                if name == "gate0":
+                    self.gate_break_at = None
+                self._log("component", f"{who} started the repair of {name}")
+                return {"ok": True, "message": f"Repair of {name} started (about 20 s)."}
+            if comp["health"] != "ok":
+                state = "broken" if comp["health"] == "broken" else "under repair"
+                return {"ok": False, "message": f"{name} is {state}. Repair it first, do not operate it."}
+            if kind == "gate" and action in ("open", "close"):
+                comp["state"] = "Open" if action == "open" else "Closed"
+                comp["close_at"] = None
+                if action == "open":
+                    comp["uses"] += 1
+                self._log("gate", f"{who} {'opened' if action == 'open' else 'closed'} {name}")
+                return {"ok": True, "message": f"{name} {'opened' if action == 'open' else 'closed'}."}
+            if kind == "fan" and action in ("on", "off", "auto"):
+                comp["manual"] = None if action == "auto" else action
+                self._log("component", f"{who} set {name} to {'automatic' if action == 'auto' else action.upper()}")
+                return {"ok": True, "message": f"{name} set to {'automatic' if action == 'auto' else action}."}
+            return {"ok": False, "message": f"'{action}' is not a valid action for a {kind}."}
+
     def history(self, date):
         """All visits of one past day (for the '30 days' view)."""
         with self.lock:
@@ -359,6 +412,11 @@ class MockWorld:
                     g["health"], g["state"], self.gate_break_at = "broken", "Closed", self.now
                     self._log("component", "gate0 (entrance barrier) broke down")
                     self._penalty("Gate broke: predictive maintenance was missed", 10, "gate0")
+            elif name == "fan":
+                f = self.fans[1]
+                if f["health"] == "ok":
+                    f["health"], f["on"], f["manual"] = "broken", False, None
+                    self._log("component", f"{f['name']} (ZONE2 exhaust fan) broke down")
             elif name == "rogue":
                 candidates = [c for c in self.cars.values() if c["state"] in ("parked", "arriving") and not c["flag"]]
                 free = [s for s in self.spots.values() if s["state"] == "available" and s["health"] == "ok"

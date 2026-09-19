@@ -38,6 +38,20 @@ def fetch_history(url, date, timeout=5):
     return r.json()
 
 
+def send_control(url, kind, name, action, role, timeout=5):
+    """Manual control: POST {url}/api/control/{gate|fan}/{name}/{action}  body {"role": "operator"}  ->  {"ok": true, "message": "..."}
+    The backend decides whether the role is allowed. Optional bearer token in DASHBOARD_API_TOKEN."""
+    headers = {"Authorization": "Bearer " + os.environ["DASHBOARD_API_TOKEN"]} if os.environ.get("DASHBOARD_API_TOKEN") else {}
+    r = requests.post(f"{url.rstrip('/')}/api/control/{kind}/{name}/{action}", json={"role": role.lower()}, headers=headers, timeout=timeout)
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    if r.status_code >= 400 and "ok" not in data:
+        return {"ok": False, "message": data.get("message") or data.get("detail") or f"Backend answered {r.status_code}"}
+    return {"ok": bool(data.get("ok", True)), "message": data.get("message", "Done.")}
+
+
 def mode():
     return os.environ.get("DASHBOARD_SOURCE", "mock").lower()
 

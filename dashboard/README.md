@@ -1,9 +1,12 @@
 # Dashboard (Streamlit)
 
 Live view of the smart car park: free/occupied spots, the S1-S30 map (6 zones with 5 slots each), cars inside, recent activity,
-carbon monoxide per zone, gate and fan status, and alerts for the challenge scenarios.
+carbon monoxide per zone, gate and fan status, alerts for the challenge scenarios, and an Admin/Operator panel with manual
+gate and fan buttons.
 
-The dashboard only **reads** data. It never talks to the simulator and never changes the backend.
+The dashboard never talks to the simulator. It reads data from the backend (`GET`), and the manual buttons send a control
+request to the backend (`POST`, see "Manual controls"). Until the backend supports that, the buttons only work on the built-in
+mock data.
 
 ## Run it
 
@@ -28,6 +31,8 @@ $env:DASHBOARD_API_URL = "http://localhost:8000"
 streamlit run dashboard/app.py
 ```
 
+Optional: `DASHBOARD_API_TOKEN` (sent as `Authorization: Bearer <token>` on control requests).
+
 The dashboard then calls `GET {DASHBOARD_API_URL}/api/snapshot` every few seconds. If the backend stops answering,
 the page keeps showing the last good data with a warning banner instead of crashing.
 
@@ -44,7 +49,7 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `sessions` | finished visits, newest first, for the History search: `[{plate, car_type, spot, entered_at:"2026-01-01 12:00:00", left_at, minutes, charge, status:"Completed"}]` |
 | `archive` | one summary row per day, newest first (today first), up to 30 days, for the 30-day history: `[{date:"2026-01-01", visits, cars_parked, drive_through, income, penalties, peak_pct, avg_minutes}]` |
 | `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance"}]` |
-| `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance"}]` |
+| `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance", manual:"on"\|"off"\|null}]` (`manual` is optional: `null`/missing = automatic) |
 | `zones` | `[{name:"ZONE1", co_ppm:12.3, risk:"Safe\|Mid\|High\|Critical"}]` (50 ppm and up counts as Mid) |
 | `history.occupancy` | `[{t:ISO time, occupied:int, total:int}]` |
 | `history.co` | `[{t:ISO time, zone, ppm}]` |
@@ -59,12 +64,39 @@ The backend should keep 30 days and delete anything older.
 
 `mock_data.py` produces exactly this shape and is the reference example.
 
+## Manual controls (Admin / Operator)
+
+The sidebar has a "Signed in as" selector (Viewer, Operator, Admin). It is a **demo sign-in only**; the real login has to come
+from the backend. The "Manual controls" card under the parking map then offers:
+
+- Gates: **Open**, **Close**, **Repair**
+- Exhaust fans: **On**, **Off**, **Auto**, **Repair**
+
+Viewer sees the card read-only. Admin also gets a "Control log" of what was pressed.
+
+When `DASHBOARD_SOURCE=api`, each button sends:
+
+```
+POST {DASHBOARD_API_URL}/api/control/{gate|fan}/{name}/{action}
+body:  {"role": "operator"}            (or "admin")
+reply: {"ok": true, "message": "gate0 opened."}
+```
+
+- `name` is the gate or fan name from the snapshot (`gate0`, `fan1`, ...).
+- `action` for gates: `open`, `close`, `repair`. For fans: `on`, `off`, `auto`, `repair`.
+- The **backend must enforce the rules**, the dashboard buttons are only a convenience:
+  - `viewer` is refused (reply `{"ok": false, "message": "..."}`).
+  - `repair` is only allowed if the component is `broken`; it then becomes `maintenance` until fixed.
+  - A component whose `health` is not `ok` must never be operated (organiser rule). Refuse with `ok: false`.
+  - Keep the dashboard's view consistent: the next `/api/snapshot` should show the new gate state or fan `on`/`manual`.
+- The reply `message` is shown to the user as-is, so keep it short and readable.
+
 ## Files
 
-- `app.py`: page layout and auto-refresh
-- `ui.py`: the HTML pieces (KPIs, parking map, gates, CO meters, feed)
-- `charts.py`: Plotly charts (occupancy, CO, arrivals)
+- `app.py`: page layout, auto-refresh, sidebar (role, demo buttons) and the Manual controls card
+- `ui.py`: the HTML pieces (KPIs, parking map, gates, CO meters, system status, feed)
+- `charts.py`: Plotly charts (occupancy, CO, arrivals, daily visits)
 - `alerts.py`: rules that turn a snapshot into alerts
 - `styles.py`: colours (light and dark) and CSS
-- `data_source.py`: mock or API switch
-- `mock_data.py`: the fake car park
+- `data_source.py`: mock or API switch (`fetch_api`, `fetch_history`, `send_control`)
+- `mock_data.py`: the fake car park, including `control()` for the manual buttons
