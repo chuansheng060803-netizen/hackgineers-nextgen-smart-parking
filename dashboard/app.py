@@ -95,15 +95,19 @@ def controls_card(snap, role):
         if msg and (dt.datetime.now() - msg["at"]).total_seconds() < 20:
             (st.success if msg.get("ok") else st.warning)(msg.get("message", ""))
         for g in snap["gates"]:
-            health, is_open = g.get("health", "ok"), g.get("state") == "Open"
-            note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(health, "")
+            health = g.get("health", "ok")
+            note = {"broken": " · **Broken**", "maintenance": " · **Under repair**"}.get(
+                health, f" · held {g.get('manual')} by hand" if g.get("manual") else " · automatic")
             st.markdown(f"**{g['name']}** {g.get('role') or ''} · {g.get('state') or '?'}{note}")
-            b1, b2, b3 = st.columns(3)
-            b1.button("Open", key=f"c_{g['name']}_open", width="stretch", disabled=health != "ok" or is_open,
+            b1, b2, b3, b4 = st.columns(4)
+            manual = g.get("manual")
+            b1.button("Open", key=f"c_{g['name']}_open", width="stretch", disabled=health != "ok" or manual == "open",
                       on_click=do_control, args=("gate", g["name"], "open", role))
-            b2.button("Close", key=f"c_{g['name']}_close", width="stretch", disabled=health != "ok" or not is_open,
+            b2.button("Close", key=f"c_{g['name']}_close", width="stretch", disabled=health != "ok" or manual == "closed",
                       on_click=do_control, args=("gate", g["name"], "close", role))
-            b3.button("Repair", key=f"c_{g['name']}_repair", width="stretch", disabled=health != "broken",
+            b3.button("Auto", key=f"c_{g['name']}_auto", width="stretch", disabled=health != "ok" or not manual,
+                      on_click=do_control, args=("gate", g["name"], "auto", role))
+            b4.button("Repair", key=f"c_{g['name']}_repair", width="stretch", disabled=health != "broken",
                       on_click=do_control, args=("gate", g["name"], "repair", role))
         with st.expander(f"Exhaust fans ({len(snap['fans'])})"):
             for f in snap["fans"]:

@@ -138,6 +138,8 @@ def gates_block(gates, fans):
             pills += _pill("Broken", "crit", ICON["x"])
         elif health == "maintenance":
             pills += _pill("In repair", "warn", ICON["wrench"])
+        if g.get("manual"):
+            pills += _pill("Manual", "warn")
         role = g.get("role") or (g.get("zone") or "gate")
         rows.append(f'<div class="pk-row"><div><span class="nm">{e(g["name"])}</span> <span class="role">{e(role)}'
                     f'{(" · " + e(g["zone"])) if g.get("zone") else ""}</span></div><div class="right">{pills}</div></div>')

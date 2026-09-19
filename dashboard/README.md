@@ -48,7 +48,7 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 | `events` | newest first: `[{t:"12:00:05", kind:"entry\|park\|exit\|payment\|penalty\|rogue\|refused\|component\|co\|gate", text}]` |
 | `sessions` | finished visits, newest first, for the History search: `[{plate, car_type, spot, entered_at:"2026-01-01 12:00:00", left_at, minutes, charge, status:"Completed"}]` |
 | `archive` | one summary row per day, newest first (today first), up to 30 days, for the 30-day history: `[{date:"2026-01-01", visits, cars_parked, drive_through, income, penalties, peak_pct, avg_minutes}]` |
-| `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance"}]` |
+| `gates` | `[{name, role, zone, state:"Open\|Closed\|Opening\|Closing", health:"ok\|broken\|maintenance", manual:"open"\|"closed"\|null}]` (`manual` is optional: `null`/missing = automatic) |
 | `fans` | `[{name, zone, on:true, health:"ok\|broken\|maintenance", manual:"on"\|"off"\|null}]` (`manual` is optional: `null`/missing = automatic) |
 | `zones` | `[{name:"ZONE1", co_ppm:12.3, risk:"Safe\|Mid\|High\|Critical"}]` (50 ppm and up counts as Mid) |
 | `history.occupancy` | `[{t:ISO time, occupied:int, total:int}]` |
@@ -69,7 +69,7 @@ The backend should keep 30 days and delete anything older.
 The sidebar has a "Signed in as" selector (Viewer, Operator, Admin). It is a **demo sign-in only**; the real login has to come
 from the backend. The "Manual controls" card under the parking map then offers:
 
-- Gates: **Open**, **Close**, **Repair**
+- Gates: **Open**, **Close**, **Auto**, **Repair**  (Open/Close hold the gate that way until **Auto** gives it back to normal operation)
 - Exhaust fans: **On**, **Off**, **Auto**, **Repair**
 
 Viewer sees the card read-only. Admin also gets a "Control log" of what was pressed.
@@ -83,12 +83,12 @@ reply: {"ok": true, "message": "gate0 opened."}
 ```
 
 - `name` is the gate or fan name from the snapshot (`gate0`, `fan1`, ...).
-- `action` for gates: `open`, `close`, `repair`. For fans: `on`, `off`, `auto`, `repair`.
+- `action` for gates: `open` (held open), `close` (held shut, cars cannot pass), `auto` (back to normal), `repair`. For fans: `on`, `off`, `auto`, `repair`.
 - The **backend must enforce the rules**, the dashboard buttons are only a convenience:
   - `viewer` is refused (reply `{"ok": false, "message": "..."}`).
   - `repair` is only allowed if the component is `broken`; it then becomes `maintenance` until fixed.
   - A component whose `health` is not `ok` must never be operated (organiser rule). Refuse with `ok: false`.
-  - Keep the dashboard's view consistent: the next `/api/snapshot` should show the new gate state or fan `on`/`manual`.
+  - Keep the dashboard's view consistent: the next `/api/snapshot` should show the new gate `state`/`manual` or fan `on`/`manual`. `auto` clears `manual` back to `null`.
 - The reply `message` is shown to the user as-is, so keep it short and readable.
 
 ## Files
