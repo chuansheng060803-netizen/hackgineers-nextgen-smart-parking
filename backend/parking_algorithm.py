@@ -10,7 +10,7 @@ def is_operational(spot):
 
 
 def is_available(spot):
-    return len(spot.get("detectedCars", [])) == 0
+    return spot.get("detectedCars", 0) == 0
 
 
 def is_compatible(car, spot):

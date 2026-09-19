@@ -38,7 +38,7 @@ spots = [
         "name": "S1",
         "purpose": "Park",
         "parkingForCarType": "Any",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     }
@@ -54,7 +54,7 @@ check(
 
 
 # TEST 2: Occupied parking spot
-spots[0]["detectedCars"] = ["XYZ 999"]
+spots[0]["detectedCars"] = 1
 
 result = select_parking_spot(normal_car, spots)
 
@@ -66,7 +66,7 @@ check(
 
 
 # TEST 3: Broken parking spot
-spots[0]["detectedCars"] = []
+spots[0]["detectedCars"] = 0
 spots[0]["broken"] = True
 
 result = select_parking_spot(normal_car, spots)
@@ -97,7 +97,7 @@ entry_spot = [
         "name": "ENTRY1",
         "purpose": "EntrySpot",
         "parkingForCarType": "Any",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     }
@@ -118,7 +118,7 @@ electric_spot = [
         "name": "EV1",
         "purpose": "Park",
         "parkingForCarType": "Electric",
-        "detectedCars": [],
+        "detectedCars": 0,
         "broken": False,
         "isUnderMaintenance": False
     }
