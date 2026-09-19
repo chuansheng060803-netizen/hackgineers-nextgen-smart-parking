@@ -77,6 +77,9 @@ if __name__ == "__main__":
 
         db = DatabaseAdapter()
         db.initialize()
+        stale = db.close_stale_sessions()
+        if stale:
+            logger.info("Closed %d session(s) left open by a previous run", stale)
         try:
             db.sync(client)  # read-only: list_parking_spots()
         except Exception:

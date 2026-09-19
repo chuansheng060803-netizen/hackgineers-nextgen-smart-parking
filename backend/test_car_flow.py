@@ -236,21 +236,51 @@ class BarrierTests(FlowTestCase):
 class ReservationTests(FlowTestCase):
     """A car that never arrives must not hold its spot for ever."""
 
-    def test_spot_is_released_and_move_car_resent_when_the_car_never_arrives(self):
+    def test_slow_car_is_resent_to_the_same_spot_and_keeps_it(self):
+        self.client.spots = [spot("S1"), spot("S2")]
         self.enter()
         self.assertEqual(self.car()["spot"], "S1")
-        self.assertEqual(len(self.client.of("move_car")), 1)
         first_sent = self.car()["move_sent_time"]
 
         # 3 simulator minutes later, still no Park event for it
         self.send("ENTRY1", "EntrySpot", "CarIn", "BBB 222", "Normal", "2026-09-19 14:03:00")
 
-        # The reservation was given up and the car immediately sent again, so a
-        # command swallowed by a closed barrier is not lost for ever.
+        # told again where to go, to the SAME spot
         self.assertEqual(self.client.of("move_car").count(("move_car", PLATE, "S1")), 2)
+        self.assertEqual(self.car()["spot"], "S1")
         self.assertGreater(self.car()["move_sent_time"], first_sent)
-        # exactly one car holds the single spot: nothing is double-booked
-        self.assertEqual(len([c for c in self.flow.cars.values() if c["spot"]]), 1)
+
+    def test_a_slow_cars_spot_is_never_given_to_another_car(self):
+        """Two cars sent to one spot is the bug that made cars drive in circles."""
+        self.enter()                      # AAA takes the only spot, S1
+        for minute in (3, 6, 9, 12):      # long past the retry timeout
+            self.send("ENTRY1", "EntrySpot", "CarIn", f"C{minute} 000", "Normal",
+                      f"2026-09-19 14:{minute:02d}:00")
+        holders = [c["plate"] for c in self.flow.cars.values() if c["spot"] == "S1"]
+        self.assertEqual(holders, [PLATE])
+        self.assertEqual({c[2] for c in self.client.of("move_car")}, {"S1"})
+
+    def test_a_car_that_parks_in_the_wrong_spot_is_believed(self):
+        """The car park is the source of truth; ignoring it stranded the car."""
+        self.client.spots = [spot("S1"), spot("S2")]
+        self.enter()
+        self.assertEqual(self.car()["spot"], "S1")
+        self.send("S2", "Park", "CarIn")          # it parked somewhere else
+        self.assertEqual(self.car()["stage"], car_flow.PARKED)
+        self.assertEqual(self.car()["spot"], "S2")
+
+    def test_a_car_that_vanishes_eventually_gives_its_spot_back(self):
+        self.enter()
+        self.send("ENTRY1", "EntrySpot", "CarIn", "BBB 222", "Normal", "2026-09-19 14:20:00")
+        self.assertNotIn(PLATE, self.flow.cars)                      # abandoned
+        self.assertEqual(self.flow.cars["BBB 222"]["spot"], "S1")    # spot reused
+
+    def test_a_car_that_arrives_in_time_keeps_its_spot_untouched(self):
+        self.enter()
+        self.park_in()
+        self.send("ENTRY1", "EntrySpot", "CarIn", "BBB 222", "Normal", "2026-09-19 14:09:00")
+        self.assertEqual(self.car()["stage"], car_flow.PARKED)
+        self.assertEqual(self.client.of("move_car").count(("move_car", PLATE, "S1")), 1)
 
     def test_a_car_that_arrives_in_time_keeps_its_spot(self):
         self.enter()

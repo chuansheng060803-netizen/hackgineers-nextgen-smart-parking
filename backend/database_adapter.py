@@ -78,6 +78,10 @@ class DatabaseAdapter:
     def initialize(self):
         init_database()
 
+    def close_stale_sessions(self):
+        """Close sessions left active by an earlier run. Call once at startup."""
+        return service.close_stale_sessions()
+
     # ---- simulator sync ---------------------------------------------------
 
     def sync_spots(self, spots):

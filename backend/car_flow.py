@@ -37,9 +37,13 @@ MAX_REMEMBERED_EVENTS = 10_000
 # Do not re-read the barriers more often than this (real seconds).
 GATE_CHECK_INTERVAL_S = 5.0
 
-# Simulator seconds a car may take to reach the spot we sent it to. After this
-# the reservation is given up: see _expire_reservations.
-RESERVATION_TIMEOUT_S = 120
+# Simulator seconds before move_car is sent again for a car that has not
+# arrived. The car KEEPS its spot: see _expire_reservations.
+RESERVATION_RETRY_S = 60
+
+# Simulator seconds after which a car is assumed gone for good and its spot is
+# finally handed back. Must stay far above RESERVATION_RETRY_S.
+RESERVATION_ABANDON_S = 900
 
 
 def verify_signature(event):
@@ -137,6 +141,10 @@ class CarFlow:
             when = _parse_time(event)
             if when and (self._sim_now is None or when > self._sim_now):
                 self._sim_now = when
+            # Before anything else, so a spot freed by a car that never showed up
+            # can go to the car this event is about. Safe to run twice: it is a
+            # no-op for a car whose timer has just been reset.
+            self._expire_reservations()
             self._db("log_event", event)
             event_class = event.get("EventClass")
             if event_class == "car_spot_action":
@@ -271,11 +279,16 @@ class CarFlow:
                 del self.cars[plate]
             return
 
-        # Anything else is a parking spot: only our reserved spot matters.
+        # Anything else is a parking spot. A car that parks somewhere other than
+        # where we sent it (it ignored us, or our command was superseded) is
+        # believed rather than ignored: what the car park reports is the truth,
+        # and discarding it would leave the car stuck in MOVING for ever.
         if spot_name != car["spot"]:
-            logger.warning("%s event for %s, but %s was assigned %s",
-                           direction, spot_name, plate, car["spot"])
-            return
+            logger.warning("%s parked in %s but was sent to %s; trusting the car park",
+                           plate, spot_name, car["spot"])
+            if car["spot"] and direction == "CarIn":
+                self._db("set_spot_available", car["spot"])  # release the one it skipped
+            car["spot"] = spot_name
         if direction == "CarIn":
             car["parked_in_time"] = when
             if car["stage"] in (MOVING, WAITING):
@@ -422,29 +435,44 @@ class CarFlow:
     # ---- retries ----------------------------------------------------------
 
     def _expire_reservations(self):
-        """Give up a spot a car was sent to but never reached.
+        """Chase up a car that has not reached the spot we sent it to.
 
-        A car that never arrives used to hold its spot for ever. Once enough of
-        them pile up every spot looks taken, select_parking_spot returns None
-        and no new car is ever given one: the flow wedges with an empty car park.
-        Releasing the spot puts the car back in WAITING, so the next retry sends
-        move_car again (by then the barriers have been opened).
+        The car KEEPS its spot and is simply told again where to go. Handing the
+        spot to someone else instead would be wrong twice over: the first car is
+        still physically driving to it (nothing cancels a move_car), so two cars
+        converge on one spot, and when the first one arrives its Park event no
+        longer matches what we think it was assigned, so it is discarded and the
+        car is never marked PARKED at all.
+
+        Only after RESERVATION_ABANDON_S, long past any believable drive, do we
+        accept the car is gone and give the spot back.
         """
         now = self._sim_now
         if now is None:
             return
-        for car in self.cars.values():
+        for plate, car in list(self.cars.items()):
             if car["stage"] != MOVING or not car["spot"]:
                 continue
             sent = car["move_sent_time"]
-            if sent is None or (now - sent).total_seconds() < RESERVATION_TIMEOUT_S:
+            if sent is None:
                 continue
-            logger.warning("%s never reached %s after %.0fs; releasing it and retrying",
-                           car["plate"], car["spot"], (now - sent).total_seconds())
-            self._db("set_spot_available", car["spot"])
-            car["spot"] = None
-            car["stage"] = WAITING
-            car["move_sent_time"] = None
+            waited = (now - sent).total_seconds()
+            if waited >= RESERVATION_ABANDON_S:
+                logger.warning("%s never reached %s in %.0fs; giving up and freeing the spot",
+                               plate, car["spot"], waited)
+                self._db("set_spot_available", car["spot"])
+                self._db("complete_session", car["session_id"], now)
+                del self.cars[plate]
+            elif waited >= RESERVATION_RETRY_S:
+                logger.info("%s has not reached %s in %.0fs; sending it there again",
+                            plate, car["spot"], waited)
+                self._ensure_gates_open()
+                try:
+                    self.client.move_car(plate, car["spot"])
+                except SimulatorError as e:
+                    logger.error("move_car(%s, %s) retry failed: %s", plate, car["spot"], e)
+                else:
+                    car["move_sent_time"] = now
 
     def _retry_pending(self, skip=None):
         self._expire_reservations()
