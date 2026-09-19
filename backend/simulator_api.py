@@ -1,8 +1,9 @@
 """Thin client for the (organizer-provided) parking simulator API.
 
-Only endpoints seen in working code are exposed. No business logic here.
+Only documented endpoints are exposed. No business logic here.
 """
 import os
+from urllib.parse import quote
 
 import requests
 
@@ -35,11 +36,14 @@ class SimulatorClient:
 
     @staticmethod
     def _json(response):
+        """Parsed JSON, or None for an empty success body (e.g. gate open/close)."""
         if not response.ok:
             raise SimulatorError(
                 f"{response.request.method} {response.url} failed: "
                 f"{response.status_code} {response.text}"
             )
+        if not response.content.strip():
+            return None
         try:
             return response.json()
         except ValueError as e:
@@ -60,8 +64,9 @@ class SimulatorClient:
         return self.token
 
     def call(self, method, path, **kwargs):
-        """Authenticated call to any documented endpoint; returns parsed JSON.
+        """Authenticated call to any documented endpoint.
 
+        Returns parsed JSON, or None if the successful response body is empty.
         Logs in on first use and retries once if the token is rejected (401).
         """
         if not self.token:
@@ -78,3 +83,15 @@ class SimulatorClient:
     def list_parking_spots(self):
         """GET /api/v1/list-parking-spots -> list of spot dicts."""
         return self.call("GET", "/api/v1/list-parking-spots")
+
+    def list_barriers(self):
+        """GET /api/v1/list-barriers -> parsed JSON."""
+        return self.call("GET", "/api/v1/list-barriers")
+
+    def open_gate(self, name):
+        """POST /api/v1/barrier-gates/{name}/open (201, empty body). Returns None."""
+        self.call("POST", f"/api/v1/barrier-gates/{quote(name, safe='')}/open")
+
+    def close_gate(self, name):
+        """POST /api/v1/barrier-gates/{name}/close (201, empty body). Returns None."""
+        self.call("POST", f"/api/v1/barrier-gates/{quote(name, safe='')}/close")
