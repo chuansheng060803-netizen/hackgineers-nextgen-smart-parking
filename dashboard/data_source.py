@@ -10,7 +10,7 @@ import os
 
 import requests
 
-DEFAULTS = {"spots": [], "cars": [], "events": [], "sessions": [], "gates": [], "fans": [], "zones": [], "penalties": [],
+DEFAULTS = {"spots": [], "cars": [], "events": [], "sessions": [], "archive": [], "gates": [], "fans": [], "zones": [], "penalties": [],
             "history": {"occupancy": [], "co": [], "arrivals": []},
             "stats": {"revenue": 0, "cars_served": 0, "penalty_count": 0, "penalty_total": 0, "refused_last_10min": 0}}
 
@@ -29,6 +29,13 @@ def fetch_api(url, timeout=3):
     r = requests.get(url.rstrip("/") + "/api/snapshot", timeout=timeout)
     r.raise_for_status()
     return normalise(r.json())
+
+
+def fetch_history(url, date, timeout=5):
+    """All visits of one past day: GET {url}/api/history?date=YYYY-MM-DD  ->  [{plate, car_type, spot, entered_at, left_at, minutes, charge, status}]"""
+    r = requests.get(url.rstrip("/") + "/api/history", params={"date": date}, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 
 def mode():

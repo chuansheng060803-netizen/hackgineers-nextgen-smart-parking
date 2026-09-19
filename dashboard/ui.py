@@ -67,8 +67,18 @@ def kpis(spots, cars, stats):
         '</div>')
 
 
-SPOT_LABEL = {"available": "Free", "reserved": "Reserved", "broken": "Broken", "maintenance": "Repair"}
-TYPE_TAG = {"Electric": "EV", "Accessible": "ACC"}
+SPOT_LABEL = {"available": "Free", "reserved": "Reserved", "broken": "Broken", "maintenance": "Under repair"}
+BOLT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>'
+WHEEL = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+         '<circle cx="12" cy="4" r="1.6"/><path d="M12 7v6h5l2 5"/><path d="M8 11a5 5 0 1 0 6 7"/></svg>')
+TYPE_TAG = {"Electric": ("EV", BOLT), "Accessible": ("ACC", WHEEL)}
+# a car seen from above, nose up. Solid for a parked car, outline only for a car still on its way.
+CAR = ('<svg viewBox="0 0 40 64"><rect x="5" y="3" width="30" height="58" rx="11" fill="currentColor"/>'
+       '<rect x="10" y="15" width="20" height="13" rx="4" fill="var(--pk-surface)" opacity=".6"/>'
+       '<rect x="10" y="38" width="20" height="10" rx="3" fill="var(--pk-surface)" opacity=".45"/>'
+       '<rect x="9" y="6" width="7" height="3.5" rx="1.5" fill="#fff" opacity=".85"/><rect x="24" y="6" width="7" height="3.5" rx="1.5" fill="#fff" opacity=".85"/></svg>')
+CAR_GHOST = ('<svg viewBox="0 0 40 64" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="4 3"><rect x="5" y="3" width="30" height="58" rx="11"/>'
+             '<rect x="10" y="15" width="20" height="13" rx="4"/></svg>')
 
 
 def parking_map(spots):
@@ -76,12 +86,11 @@ def parking_map(spots):
     for s in spots:
         zones.setdefault(s.get("zone") or "-", []).append(s)
     legend = ('<div class="pk-legend">'
-              '<span><i style="background:var(--pk-surface2)"></i>Free</span>'
+              '<span><i style="background:var(--pk-surface2);border-style:dashed"></i>Free</span>'
               '<span><i style="background:var(--pk-s1);border-color:var(--pk-s1)"></i>Occupied</span>'
-              '<span><i style="background:transparent;border:2px solid var(--pk-s1)"></i>Reserved (car on the way)</span>'
+              '<span><i style="background:transparent;border:2px dashed var(--pk-s1)"></i>Car on the way</span>'
               '<span><i style="background:var(--pk-crit);border-color:var(--pk-crit)"></i>Broken</span>'
-              '<span><i style="background:var(--pk-warn);border-color:var(--pk-warn)"></i>Under repair</span>'
-              '<span>EV = electric · ACC = accessible</span></div>')
+              '<span><i style="background:var(--pk-warn);border-color:var(--pk-warn)"></i>Under repair</span></div>')
     out = [f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">Parking map</span>{legend}</div>']
     for name, items in zones.items():
         n = len(items)
@@ -90,15 +99,23 @@ def parking_map(spots):
         tiles = []
         for s in items:
             st = s["state"]
-            label = e(s.get("car") or "") if st == "occupied" and s.get("car") else SPOT_LABEL.get(st, st)
-            if st == "reserved" and s.get("car"):
-                label = "→ " + e(s["car"])
+            car = e(s["car"]) if s.get("car") else ""
+            if st == "occupied":
+                art, label = f'<div class="art">{CAR}</div>', car or "Occupied"
+            elif st == "reserved":
+                art, label = f'<div class="art">{CAR_GHOST}</div>', ("→ " + car) if car else "Reserved"
+            elif st == "broken":
+                art, label = f'<div class="art st">{ICON["x"]}</div>', "Broken"
+            elif st == "maintenance":
+                art, label = f'<div class="art st">{ICON["wrench"]}</div>', "Under repair"
+            else:
+                art, label = '<div class="art p">P</div>', "Free"
             tag = TYPE_TAG.get(s.get("type"))
             title = f'{s["name"]} · {s.get("type", "Any")} · {st}' + (f' · {s["car"]}' if s.get("car") else "")
             cls = f'pk-spot {st}' + (" rogue" if s.get("flag") == "rogue" else "")
             tiles.append(f'<div class="{cls}" title="{e(title)}"><div class="top"><span class="n">{e(s["name"])}</span>'
-                         + (f'<span class="k">{tag}</span>' if tag else "")
-                         + f'</div><span class="l">{label}</span></div>')
+                         + (f'<span class="k">{tag[1]}{tag[0]}</span>' if tag else "")
+                         + f'</div>{art}<span class="l">{label}</span></div>')
         out.append(f'<div class="pk-zone"><div class="pk-zone-h"><b>{e(name)}</b><span class="pk-meta">{free} free of {n}</span>'
                    f'<div class="pk-track"><span style="width:{(100 * busy / n) if n else 0:.0f}%"></span></div></div>'
                    f'<div class="pk-spots">{"".join(tiles)}</div></div>')

@@ -15,12 +15,15 @@ import threading
 import time
 from collections import deque
 
-ZONES = ["ZONE1", "ZONE2", "ZONE3"]
-SPOTS_PER_ZONE = 10
+ZONES = ["ZONE1", "ZONE2", "ZONE3", "ZONE4", "ZONE5", "ZONE6"]
+SPOTS_PER_ZONE = 5
 STEP_S = 5.0                                   # the simulation moves in 5-second steps
 CO_MID, CO_HIGH, CO_CRITICAL = 50.0, 100.0, 200.0   # ppm; the organisers say 50 counts as "medium"
-ACCESSIBLE_SPOTS = {"S1", "S2", "S11"}
-ELECTRIC_SPOTS = {"S9", "S10", "S19", "S20", "S29", "S30"}
+ACCESSIBLE_SPOTS = {"S1", "S6", "S11", "S16", "S21", "S26"}      # first slot of each zone
+ELECTRIC_SPOTS = {"S5", "S10", "S15", "S20", "S25", "S30"}       # last slot of each zone
+ARRIVAL_EVERY_S = 14                          # on average one car every 14 s (busy enough to watch, not always full)
+STAY_RANGE_S = (180, 420)                     # parked cars stay 3 to 7 minutes
+DRIVE_THROUGH_SHARE = 0.12                    # 12% just use the car park as a short cut and leave straight away
 PARKING_RATE = 1.0                             # per minute (organisers' example)
 ELECTRIC_RATE = 2.0                            # extra per minute for electricity
 
@@ -53,18 +56,23 @@ class MockWorld:
         self.events = deque(maxlen=300)
         self.penalties = deque(maxlen=300)
         self.arrivals = deque(maxlen=3000)
-        self.sessions = deque(maxlen=500)            # finished visits, newest first
+        self.sessions = deque(maxlen=2000)            # finished visits, newest first
         self.history_occ = deque(maxlen=900)
         self.history_co = deque(maxlen=900)
         self.revenue = 0.0
         self.cars_served = 0
         self.refused = deque(maxlen=200)
         self._build()
-        # Fast-forward 30 minutes so charts have history the moment the page opens.
-        self.now = dt.datetime.now().replace(microsecond=0) - dt.timedelta(minutes=30)
+        # Fast-forward 60 minutes so charts have history the moment the page opens.
+        self.now = dt.datetime.now().replace(microsecond=0) - dt.timedelta(minutes=60)
         self._next_sample = self.now
-        for _ in range(int(30 * 60 / STEP_S)):
+        for _ in range(int(60 * 60 / STEP_S)):
             self._step()
+        # The warm-up gave the charts some history. Now start the counters from zero.
+        self.revenue, self.cars_served = 0.0, 0
+        for q in (self.penalties, self.sessions, self.refused, self.events):
+            q.clear()
+        self._build_archive()
         self._last_real = time.time()
 
     # ------------------------------------------------------------------ set-up
@@ -78,8 +86,6 @@ class MockWorld:
         self.gates = [
             {"name": "gate0", "zone": "", "role": "Entrance", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
             {"name": "gate1", "zone": "", "role": "Exit", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
-            {"name": "gate2", "zone": "ZONE2", "role": "Zone door", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
-            {"name": "gate3", "zone": "ZONE3", "role": "Zone door", "state": "Closed", "health": "ok", "uses": 0, "close_at": None},
         ]
         self.fans = [{"name": f"fan{i}", "zone": z, "on": False, "health": "ok", "hours": 0.0}
                      for i, z in enumerate(ZONES)]
@@ -128,7 +134,7 @@ class MockWorld:
     # ------------------------------------------------------------------ one simulation step
     def _rate(self):
         minutes = (self.now - dt.datetime(2026, 1, 1)).total_seconds() / 60.0
-        base = (1 / 30.0) * (1 + 0.55 * math.sin(minutes / 3.0))       # arrivals per second, slow waves
+        base = (1.0 / ARRIVAL_EVERY_S) * (1 + 0.55 * math.sin(minutes / 3.0))       # arrivals per second, slow waves
         return base * (10.0 if self._active("surge") else 1.0)
 
     def _step(self):
@@ -156,6 +162,14 @@ class MockWorld:
             if self.rng.random() < 0.5:
                 self._penalty("Car left the entrance because it was neglected", 10, "gate0")
             return
+        if self.rng.random() < DRIVE_THROUGH_SHARE:          # short cut: in through the entrance, straight out again
+            self.arrivals.append(self.now)
+            self.cars[plate] = {"plate": plate, "type": car_type, "state": "passing", "spot": None, "entered": self.now,
+                                "arrive_at": None, "planned_s": 0, "parked_at": None,
+                                "leave_at": self.now + dt.timedelta(seconds=self.rng.randint(15, 40)), "flag": None}
+            self._open_gate("gate0")
+            self._log("entry", f"{plate} entered and is only passing through (short cut)", plate)
+            return
         spot = self._allocate(car_type)
         self.arrivals.append(self.now)
         if not spot:
@@ -165,14 +179,19 @@ class MockWorld:
         spot["state"], spot["car"] = "reserved", plate
         self.cars[plate] = {"plate": plate, "type": car_type, "state": "arriving", "spot": spot["name"],
                             "entered": self.now, "arrive_at": self.now + dt.timedelta(seconds=self.rng.randint(6, 12)),
-                            "planned_s": self.rng.randint(60, 240), "parked_at": None, "leave_at": None, "flag": None}
+                            "planned_s": self.rng.randint(*STAY_RANGE_S), "parked_at": None, "leave_at": None, "flag": None}
         self._open_gate("gate0")
-        if spot["zone"] in ("ZONE2", "ZONE3"):
-            self._open_gate("gate2" if spot["zone"] == "ZONE2" else "gate3", 8)
         self._log("entry", f"{plate} ({car_type}) entered, sent to {spot['name']}", plate)
 
     def _progress_cars(self):
         for plate, car in list(self.cars.items()):
+            if car["state"] == "passing":
+                if self.now >= car["leave_at"]:
+                    self._open_gate("gate1")
+                    self._log("exit", f"{plate} drove through and left without parking", plate)
+                    self.sessions.appendleft(self._visit_row(car, "-", 0.0, "Drove through"))
+                    del self.cars[plate]
+                continue
             spot = self.spots[car["spot"]]
             if car["state"] == "arriving" and self.now >= car["arrive_at"]:
                 car["state"], car["parked_at"] = "parked", self.now
@@ -191,11 +210,7 @@ class MockWorld:
                 self._log("payment", f"{plate} paid {charge:.2f} ({minutes} min)", plate)
                 self._open_gate("gate1")
                 self._log("exit", f"{plate} left the car park", plate)
-                self.sessions.appendleft({"plate": plate, "car_type": car["type"], "spot": car["spot"],
-                                          "entered_at": car["entered"].strftime("%Y-%m-%d %H:%M:%S"),
-                                          "left_at": self.now.strftime("%Y-%m-%d %H:%M:%S"),
-                                          "minutes": round((self.now - car["entered"]).total_seconds() / 60.0, 1),
-                                          "charge": round(charge, 2), "status": "Completed"})
+                self.sessions.appendleft(self._visit_row(car, car["spot"], charge, "Completed"))
                 del self.cars[plate]
 
     def _gates_and_fans(self):
@@ -218,8 +233,8 @@ class MockWorld:
         moving = {z: 0 for z in ZONES}
         parked = {z: 0 for z in ZONES}
         for car in self.cars.values():
-            z = self.spots[car["spot"]]["zone"]
-            if car["state"] in ("arriving", "to_exit"):
+            z = self.spots[car["spot"]]["zone"] if car["spot"] else ZONES[0]     # passing cars stay near the entrance
+            if car["state"] in ("arriving", "to_exit", "passing"):
                 moving[z] += 1
             elif car["state"] == "parked":
                 parked[z] += 1
@@ -255,6 +270,68 @@ class MockWorld:
         for plate in [p for p in list(self.until) if p.startswith("rogue:")]:
             if plate[6:] not in self.cars:
                 del self.until[plate]
+
+    def _visit_row(self, car, spot, charge, status):
+        return {"plate": car["plate"], "car_type": car["type"], "spot": spot,
+                "entered_at": car["entered"].strftime("%Y-%m-%d %H:%M:%S"), "left_at": self.now.strftime("%Y-%m-%d %H:%M:%S"),
+                "minutes": round((self.now - car["entered"]).total_seconds() / 60.0, 1), "charge": round(charge, 2), "status": status}
+
+    def _build_archive(self):
+        """Made-up records for the previous 29 days, so the '30 days' view has something to show.
+        A real backend would keep these in its database and delete anything older than 30 days."""
+        rng = random.Random(4242)                    # fixed seed: the same 29 days every run
+        hours = [1, 1, 1, 1, 1, 2, 4, 8, 10, 8, 6, 7, 8, 6, 5, 6, 9, 10, 7, 5, 3, 2, 1, 1]   # busy at 8-9, 12, 17-18
+        today = self.now.date()
+        self.archive_visits, self.archive_days = {}, []
+        for back in range(1, 30):
+            day = today - dt.timedelta(days=back)
+            n = rng.randint(800, 1300) if day.weekday() >= 5 else rng.randint(1100, 1900)
+            rows, edges = [], []
+            for _ in range(n):
+                car_type = rng.choices(["Normal", "Electric", "Accessible"], [0.72, 0.2, 0.08])[0]
+                start = dt.datetime.combine(day, dt.time(0)) + dt.timedelta(hours=rng.choices(range(24), hours)[0],
+                                                                            minutes=rng.randint(0, 59), seconds=rng.randint(0, 59))
+                plate = f"{rng.choice('WBPV')}{rng.choice(string.ascii_uppercase)}{rng.choice(string.ascii_uppercase)} {rng.randint(100, 9999)}"
+                if rng.random() < DRIVE_THROUGH_SHARE:
+                    minutes, spot, charge, status = round(rng.uniform(0.3, 0.7), 1), "-", 0.0, "Drove through"
+                else:
+                    minutes = round(rng.uniform(3, 8), 1)
+                    pool = ELECTRIC_SPOTS if car_type == "Electric" else ACCESSIBLE_SPOTS if car_type == "Accessible" else set()
+                    spot = rng.choice(sorted(pool, key=_natural)) if pool else f"S{rng.randint(1, len(ZONES) * SPOTS_PER_ZONE)}"
+                    m = max(1, round(minutes))
+                    charge, status = m * PARKING_RATE + (m * ELECTRIC_RATE if car_type == "Electric" else 0), "Completed"
+                    edges += [(start, 1), (start + dt.timedelta(minutes=minutes), -1)]
+                rows.append({"plate": plate, "car_type": car_type, "spot": spot, "entered_at": start.strftime("%Y-%m-%d %H:%M:%S"),
+                             "left_at": (start + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S"),
+                             "minutes": minutes, "charge": round(charge, 2), "status": status})
+            rows.sort(key=lambda r: r["entered_at"], reverse=True)
+            level = peak = 0
+            for _, d in sorted(edges):
+                level += d
+                peak = max(peak, level)
+            parked = [r for r in rows if r["status"] == "Completed"]
+            self.archive_visits[day.isoformat()] = rows
+            self.archive_days.append({"date": day.isoformat(), "visits": len(rows), "cars_parked": len(parked),
+                                      "drive_through": len(rows) - len(parked), "income": round(sum(r["charge"] for r in rows), 2),
+                                      "penalties": rng.randint(0, 6), "peak_pct": min(100, round(100 * peak / (len(ZONES) * SPOTS_PER_ZONE))),
+                                      "avg_minutes": round(sum(r["minutes"] for r in parked) / max(1, len(parked)), 1)})
+
+    def _today_row(self):
+        rows = list(self.sessions)
+        inside = list(self.cars.values())
+        parked = [r for r in rows if r["status"] == "Completed"] + [c for c in inside if c["state"] != "passing"]
+        today = self.now.strftime("%Y-%m-%d")
+        peaks = [100 * h["occupied"] / h["total"] for h in self.history_occ if h["total"] and h["t"].strftime("%Y-%m-%d") == today]
+        done = [r for r in rows if r["status"] == "Completed"]
+        return {"date": today, "visits": len(rows) + len(inside), "cars_parked": len(parked),
+                "drive_through": sum(1 for r in rows if r["status"] == "Drove through") + sum(1 for c in inside if c["state"] == "passing"),
+                "income": round(self.revenue, 2), "penalties": len(self.penalties), "peak_pct": round(max(peaks)) if peaks else 0,
+                "avg_minutes": round(sum(r["minutes"] for r in done) / max(1, len(done)), 1)}
+
+    def history(self, date):
+        """All visits of one past day (for the '30 days' view)."""
+        with self.lock:
+            return list(self.archive_visits.get(date, []))
 
     # ------------------------------------------------------------------ public API
     def advance_to_real_time(self):
@@ -315,8 +392,8 @@ class MockWorld:
                 est = round(max(1, round(minutes_parked)) * (PARKING_RATE + (ELECTRIC_RATE if c["type"] == "Electric" else 0)), 2) \
                     if c["parked_at"] else 0.0
                 cars.append({"plate": c["plate"], "car_type": c["type"],
-                             "status": {"arriving": "Heading to spot", "parked": "Parked", "to_exit": "Heading to exit"}[c["state"]],
-                             "spot": c["spot"], "entered_at": c["entered"].strftime("%H:%M:%S"),
+                             "status": {"arriving": "Heading to spot", "parked": "Parked", "to_exit": "Heading to exit", "passing": "Passing through"}[c["state"]],
+                             "spot": c["spot"] or "-", "entered_at": c["entered"].strftime("%H:%M:%S"),
                              "minutes_inside": round(minutes_inside, 1), "planned_minutes": round(c["planned_s"] / 60.0, 1),
                              "estimated_charge": est, "flag": c["flag"], "assigned_spot": c.get("assigned")})
             cars.sort(key=lambda c: c["entered_at"], reverse=True)
@@ -338,6 +415,7 @@ class MockWorld:
                 "cars": cars,
                 "events": list(self.events)[:200],
                 "sessions": list(self.sessions)[:300],
+                "archive": [self._today_row()] + list(self.archive_days),
                 "gates": gates,
                 "fans": fans,
                 "zones": [{"name": z, "co_ppm": round(self.co[z], 1), "risk": co_risk(self.co[z])} for z in ZONES],

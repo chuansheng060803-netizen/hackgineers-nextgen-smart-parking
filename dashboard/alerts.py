@@ -50,6 +50,8 @@ def derive_alerts(s):
 
     # Traffic surge / congestion ------------------------------------------------
     buckets = [b.get("count", 0) for b in s.get("history", {}).get("arrivals", [])]
+    while buckets and buckets[0] == 0:          # ignore the empty stretch before the car park had any data
+        buckets.pop(0)
     if len(buckets) >= 4:
         latest, earlier = buckets[-1], buckets[:-1]
         avg = sum(earlier) / max(1, len(earlier))
@@ -57,9 +59,9 @@ def derive_alerts(s):
             alerts.append({"severity": "warning", "kind": "Traffic surge", "title": "Traffic surge at the entrance",
                            "detail": f"{latest} arrivals in the last 5 minutes (normal is about {avg:.0f})."})
     refused = s.get("stats", {}).get("refused_last_10min", 0)
-    if refused >= 3 and not any(a["kind"] == "Traffic surge" for a in alerts):
-        alerts.append({"severity": "warning", "kind": "Traffic surge", "title": "Traffic surge: cars are being turned away",
-                       "detail": f"{refused} cars refused in the last 10 minutes."})
+    if refused >= 5:
+        alerts.append({"severity": "warning", "kind": "Congestion", "title": "Cars are being turned away",
+                       "detail": f"{refused} cars could not get a spot in the last 10 minutes."})
     if total and free == 0:
         alerts.append({"severity": "critical", "kind": "Full", "title": "Car park is full",
                        "detail": "New cars are being sent away." + (f" {refused} refused in 10 min." if refused else "")})
