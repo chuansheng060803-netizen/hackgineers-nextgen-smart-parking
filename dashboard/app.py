@@ -38,8 +38,18 @@ def detect_theme():
 def today_visits(snap):
     """Cars inside now plus everyone who already left since the dashboard started."""
     day = (snap.get("generated_at") or "")[:10]
-    inside = [{"plate": c["plate"], "car_type": c["car_type"], "spot": c["spot"], "entered_at": f'{day} {c["entered_at"]}'.strip(),
-               "left_at": "", "minutes": c["minutes_inside"], "charge": c["estimated_charge"], "status": "Inside"} for c in snap["cars"]]
+
+    def entered(car):
+        # the backend sends a full timestamp; the mock sends a bare time
+        stamp = car.get("entered_at") or ""
+        return stamp if stamp[:4].isdigit() else f"{day} {stamp}".strip()
+
+    inside = [{"plate": c["plate"], "car_type": c["car_type"], "spot": c["spot"],
+               "entered_at": entered(c), "left_at": "", "minutes": c["minutes_inside"],
+               "charge": c["estimated_charge"],
+               # the car's real state, not a flat "Inside": a car at the exit has
+               # been billed and is waiting to pay, one still parked has not
+               "status": c.get("status") or "Inside"} for c in snap["cars"]]
     return inside + snap.get("sessions", [])
 
 
@@ -109,6 +119,9 @@ def controls_card(snap, role):
                       on_click=do_control, args=("gate", g["name"], "auto", role))
             b4.button("Repair", key=f"c_{g['name']}_repair", width="stretch", disabled=health != "broken",
                       on_click=do_control, args=("gate", g["name"], "repair", role))
+        if not snap["fans"]:
+            st.caption("This car park has no exhaust fans to control.")
+            return
         with st.expander(f"Exhaust fans ({len(snap['fans'])})"):
             for f in snap["fans"]:
                 health = f.get("health", "ok")
@@ -183,7 +196,9 @@ def board():
     spots, cars = snap["spots"], snap["cars"]
     alerts = snap.get("alerts") or derive_alerts(snap)
 
-    st.markdown(ui.header("Smart Parking Dashboard", f"{len(spots)} spots in {len({s.get('zone') for s in spots})} zones",
+    zone_count = len({s.get("zone") for s in spots})
+    subtitle = f"{len(spots)} spots in {zone_count} zone" + ("s" if zone_count != 1 else "")
+    st.markdown(ui.header("Smart Parking Dashboard", subtitle,
                           snap.get("source", "?"), snap.get("generated_at") or "-", ok=not err,
                           note="stale" if err else ""), unsafe_allow_html=True)
     st.markdown(ui.alerts_block(alerts), unsafe_allow_html=True)
@@ -196,7 +211,8 @@ def board():
     with right:
         st.markdown(ui.system_block(snap.get("source", "?"), not err, snap.get("generated_at"), spots, snap["gates"], snap["fans"], alerts),
                     unsafe_allow_html=True)
-        st.markdown(ui.co_block(snap["zones"]), unsafe_allow_html=True)
+        if snap["zones"]:
+            st.markdown(ui.co_block(snap["zones"]), unsafe_allow_html=True)
         st.markdown(ui.gates_block(snap["gates"], snap["fans"]), unsafe_allow_html=True)
 
     h = snap["history"]

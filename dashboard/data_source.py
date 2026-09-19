@@ -25,7 +25,7 @@ def normalise(data):
     return out
 
 
-def fetch_api(url, timeout=3):
+def fetch_api(url, timeout=6):
     r = requests.get(url.rstrip("/") + "/api/snapshot", timeout=timeout)
     r.raise_for_status()
     return normalise(r.json())
@@ -57,4 +57,7 @@ def mode():
 
 
 def api_url():
-    return os.environ.get("DASHBOARD_API_URL", "http://localhost:8000")
+    # "localhost" costs ~2 s per request on Windows (it tries IPv6 first), so use
+    # the IPv4 address instead.
+    return os.environ.get("DASHBOARD_API_URL", "http://localhost:8000").replace(
+        "//localhost", "//127.0.0.1", 1)

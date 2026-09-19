@@ -18,18 +18,31 @@ streamlit run dashboard/app.py
 ```
 
 It opens at http://localhost:8501 with built-in **mock data**, so it works without the simulator or backend.
+To run it against the real car park instead, see "Run it against the real simulator" below.
 In the sidebar, the "Demo the challenges" buttons force a traffic surge, a CO buildup, a gate breakdown or a rogue car,
 so you can see how each alert looks.
 
-## Connect it to the real backend later
+## Run it against the real simulator (integrated)
 
-Set two environment variables before starting (PowerShell):
+`backend/dashboard_api.py` serves these endpoints from the live system, on the
+same port as the webhook listener, so there is nothing extra to start.
+
+Three terminals:
 
 ```
-$env:DASHBOARD_SOURCE = "api"
-$env:DASHBOARD_API_URL = "http://localhost:8000"
-streamlit run dashboard/app.py
+1) the organisers' simulator            (listens on :9898)
+
+2) cd backend
+   python run_flow.py --live --db       (webhook + dashboard API on :5000)
+
+3) $env:DASHBOARD_SOURCE = "api"
+   $env:DASHBOARD_API_URL = "http://localhost:5000"
+   streamlit run dashboard/app.py
 ```
+
+Leave off `--live` for a dry run: the dashboard still shows everything, but the
+manual gate buttons refuse instead of sending commands. Leave off `--db` and
+today's data still works; only the 30-day history needs the database.
 
 Optional: `DASHBOARD_API_TOKEN` (sent as `Authorization: Bearer <token>` on control requests).
 
@@ -62,7 +75,18 @@ One JSON object. Every key is optional; missing keys show as empty panels.
 `GET {DASHBOARD_API_URL}/api/history?date=2026-01-01` and expects the list of that day's visits, same fields as `sessions`.
 The backend should keep 30 days and delete anything older.
 
-`mock_data.py` produces exactly this shape and is the reference example.
+`mock_data.py` produces exactly this shape and is the reference example, and
+`backend/dashboard_api.py` produces it from the live simulator.
+
+### What level 1 actually looks like
+
+The dashboard draws whatever the backend sends, so it fits both. For the record,
+the organisers' level 1 is: **30 parking spots (S1-S30), all in one zone (ZONE1),
+all of type `Any`; three barrier gates (gateA, gateB, gateC); no exhaust fans**
+(`/api/v1/list-exhausts` is 404). Carbon monoxide comes from
+`/api/v1/list-zones` (`gasCarbonMonoxideLevel` and `risk`). When a snapshot has
+no fans the dashboard hides the fan panel, and it hides the CO panel when there
+are no zones.
 
 ## Manual controls (Admin / Operator)
 
@@ -100,3 +124,11 @@ reply: {"ok": true, "message": "gate0 opened."}
 - `styles.py`: colours (light and dark) and CSS
 - `data_source.py`: mock or API switch (`fetch_api`, `fetch_history`, `send_control`)
 - `mock_data.py`: the fake car park, including `control()` for the manual buttons
+
+Backend side (not in this folder):
+
+- `backend/dashboard_api.py`: builds the snapshot above from CarFlow's live car
+  state, the simulator client and the database, and serves the three endpoints.
+  Wired in by `backend/run_flow.py`.
+- `backend/test_dashboard_api.py`: its tests, including a set that runs against
+  JSON captured from the real simulator (`backend/real_simulator_sample.json`).

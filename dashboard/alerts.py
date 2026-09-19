@@ -7,6 +7,20 @@ the data the dashboard already has, so the alerts panel works with any data sour
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
+def _fan_note(snapshot, zone, running):
+    """What to say about extraction for this zone."""
+    if running:
+        turbo = any(f.get("speed") == "turbo" for f in snapshot.get("fans", [])
+                    if f["name"] in running)
+        return f"Exhaust fan {', '.join(running)} is running" + (" at turbo." if turbo else ".")
+    if not snapshot.get("fans"):
+        return "This car park has no exhaust fans: ventilate it another way."
+    in_zone = [f for f in snapshot.get("fans", []) if f.get("zone") == zone.get("name")]
+    if in_zone and all(f.get("health") != "ok" for f in in_zone):
+        return "The exhaust fan here is out of service!"
+    return "No exhaust fan running here!"
+
+
 def derive_alerts(s):
     alerts = []
     spots = s.get("spots", [])
@@ -22,8 +36,7 @@ def derive_alerts(s):
                 "severity": "warning" if risk == "Mid" else "critical", "kind": "CO buildup",
                 "title": f"Carbon monoxide {risk.lower()} in {z['name']}",
                 "detail": f"{z.get('co_ppm', 0):.0f} ppm (Mid starts at 50). "
-                          + (f"Exhaust fan {', '.join(fans)} is running" + (" at turbo." if any(f.get("speed") == "turbo" for f in s.get("fans", []) if f["name"] in fans) else ".")
-                             if fans else "No exhaust fan running here!")})
+                          + _fan_note(s, z, fans)})
 
     # Component breakdown -------------------------------------------------------
     for g in s.get("gates", []):

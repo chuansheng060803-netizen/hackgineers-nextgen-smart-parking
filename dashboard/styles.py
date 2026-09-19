@@ -71,7 +71,7 @@ def css(theme):
 .pk-kpi .bar {{ position:absolute; left:0; top:0; bottom:0; width:4px; background: var(--pk-base); }}
 .pk-kpi .bar.good {{ background: var(--pk-good); }} .pk-kpi .bar.warn {{ background: var(--pk-warn); }} .pk-kpi .bar.crit {{ background: var(--pk-crit); }}
 
-.pk-alerts {{ display:grid; gap:10px; margin-bottom:16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }}
+.pk-alerts {{ display:grid; gap:10px; margin-bottom:16px; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }}
 .pk-alert {{ display:flex; gap:12px; align-items:flex-start; padding:12px 14px; border-radius:12px; background: var(--pk-surface);
   border:1px solid var(--pk-border); border-left:5px solid var(--pk-base); }}
 .pk-alert.critical {{ border-left-color: var(--pk-crit); }} .pk-alert.warning {{ border-left-color: var(--pk-warn); }}
@@ -80,7 +80,8 @@ def css(theme):
 .pk-alert.critical svg {{ color: var(--pk-crit); }} .pk-alert.warning svg {{ color: var(--pk-warn); }} .pk-alert.info svg {{ color: var(--pk-s1); }}
 .pk-alert .t {{ font-weight:650; font-size:14px; }}
 .pk-alert .d {{ color: var(--pk-ink2); font-size:12.5px; margin-top:2px; }}
-.pk-alert .tag {{ margin-left:auto; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color: var(--pk-ink2); white-space:nowrap; }}
+.pk-alert .tag {{ margin-left:auto; padding-left:10px; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color: var(--pk-ink2); white-space:nowrap; align-self:flex-start; }}
+.pk-alert > div:not(.tag) {{ min-width:0; }}
 
 .pk-legend {{ display:flex; gap:16px; flex-wrap:wrap; color: var(--pk-ink2); font-size:12.5px; }}
 .pk-legend i {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-2px; border:1px solid var(--pk-base); }}

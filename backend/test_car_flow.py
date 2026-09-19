@@ -251,11 +251,19 @@ class ExitAndChargeTests(FlowTestCase):
 
 
 class PaymentTests(FlowTestCase):
-    def test_payment_rejected_by_default_and_no_leavepark(self):
+    def test_wrong_amount_is_rejected_and_no_leavepark(self):
+        # Amount is now checked against what we billed (confirmed with the live
+        # simulator), so a payment of the wrong size must not let the car leave.
         self.to_charging()
-        self.payment()
+        self.payment(amount=3.0)          # billed 10.0
         self.assertFalse(self.car()["paid"])
         self.assertNotIn(("move_car", PLATE, "leavepark"), self.client.calls)
+
+    def test_exact_amount_is_accepted_by_default(self):
+        self.to_charging()
+        self.payment(amount="10.00")      # the simulator sends Amount as a string
+        self.assertTrue(self.car()["paid"])
+        self.assertIn(("move_car", PLATE, "leavepark"), self.client.calls)
 
     def test_valid_payment_sends_leavepark_once(self):
         self.flow = CarFlow(self.client, amount_check=lambda event, car: True)

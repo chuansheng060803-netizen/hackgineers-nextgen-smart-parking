@@ -34,32 +34,46 @@ def alerts_block(alerts):
 
 
 def kpis(spots, cars, stats):
+    """The five headline numbers.
+
+    These must agree with what the simulator itself reports. A spot that is
+    *reserved* for a car that has not arrived is still physically empty, and a
+    car that has been allocated a spot but is queued outside the barrier is not
+    yet inside the car park. Counting either one as "taken" or "inside" makes the
+    dashboard disagree with the car park in front of you, so both are shown
+    separately instead of being folded into the headline.
+    """
     total = len(spots)
     counts = {}
     for s in spots:
         counts[s.get("state")] = counts.get(s.get("state"), 0) + 1
-    free = counts.get("available", 0)
     occupied = counts.get("occupied", 0)
     reserved = counts.get("reserved", 0)
-    busy = occupied + reserved
+    free = counts.get("available", 0)          # empty AND not held for anyone
+    empty = free + reserved                    # what the simulator calls free
     pct_free = round(100 * free / total) if total else 0
-    pct_busy = round(100 * busy / total) if total else 0
+    pct_used = round(100 * occupied / total) if total else 0
+
     tone, word = ("good", "plenty of space")
     if total and free == 0:
-        tone, word = "crit", "full"
+        tone, word = "crit", "none left to give out"
     elif total and free / total <= 0.15:
         tone, word = "warn", "nearly full"
-    moving_in = sum(1 for c in cars if c.get("status") == "Heading to spot")
-    moving_out = sum(1 for c in cars if c.get("status") == "Heading to exit")
+
+    heading_in = sum(1 for c in cars if c.get("status") == "Heading to spot")
+    leaving = sum(1 for c in cars if c.get("status") == "Heading to exit")
+    inside = occupied + leaving                # cars actually in the car park
+    held = f" · {reserved} held for cars on the way" if reserved else ""
     pen_n, pen_t = stats.get("penalty_count", 0), stats.get("penalty_total", 0)
     return (
         '<div class="pk pk-kpis">'
         f'<div class="pk-kpi hero"><div class="bar {tone}"></div><div class="lbl">Available spots</div>'
-        f'<div class="val">{free}<small> / {total}</small></div><div class="sub"><span class="pk-dot {tone}"></span>{pct_free}% free · {word}</div></div>'
-        f'<div class="pk-kpi"><div class="lbl">Occupancy</div><div class="val">{pct_busy}<small>%</small></div>'
-        f'<div class="sub">{occupied} parked · {reserved} on the way</div></div>'
-        f'<div class="pk-kpi"><div class="lbl">Cars inside</div><div class="val">{len(cars)}</div>'
-        f'<div class="sub">{moving_in} arriving · {moving_out} leaving</div></div>'
+        f'<div class="val">{free}<small> / {total}</small></div>'
+        f'<div class="sub"><span class="pk-dot {tone}"></span>{pct_free}% free · {word}</div></div>'
+        f'<div class="pk-kpi"><div class="lbl">Occupancy</div><div class="val">{pct_used}<small>%</small></div>'
+        f'<div class="sub">{occupied} parked · {empty} empty{held}</div></div>'
+        f'<div class="pk-kpi"><div class="lbl">Cars inside</div><div class="val">{inside}</div>'
+        f'<div class="sub">{heading_in} heading in · {leaving} leaving</div></div>'
         f'<div class="pk-kpi"><div class="lbl">Income</div><div class="val">{stats.get("revenue", 0):,.2f}</div>'
         f'<div class="sub">{stats.get("cars_served", 0)} cars served</div></div>'
         f'<div class="pk-kpi"><div class="bar {"warn" if pen_n else ""}"></div><div class="lbl">Penalties</div><div class="val">{pen_n}</div>'
@@ -157,7 +171,7 @@ def gates_block(gates, fans):
         rows.append(f'<div class="pk-row"><div><span class="nm">{e(f["name"])}</span> <span class="role">exhaust fan · {e(f.get("zone", ""))}</span></div>'
                     f'<div class="right">{pills}</div></div>')
     body = "".join(rows) or '<div class="pk-empty">No components reported yet.</div>'
-    return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">Gates and fans</span></div>{body}</div></div>'
+    return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">{"Gates and fans" if fans else "Gates"}</span></div>{body}</div></div>'
 
 
 def system_block(source, ok, updated, spots, gates, fans, alerts):
@@ -170,7 +184,7 @@ def system_block(source, ok, updated, spots, gates, fans, alerts):
     spot_pill = _pill("All working" if not broken_spots else f"{broken_spots} out of service", "good" if not broken_spots else "warn")
     al = _pill("None" if not alerts else f"{len(alerts)} active" + (f" ({crit} critical)" if crit else ""), "good" if not alerts else "crit" if crit else "warn")
     rows = [("Data source", _pill(source)), ("Connection", conn), ("Last update", _pill(updated or "-")),
-            ("Gates and fans", comp), ("Parking spots", spot_pill), ("Alerts", al)]
+            ("Gates and fans" if fans else "Gates", comp), ("Parking spots", spot_pill), ("Alerts", al)]
     body = "".join(f'<div class="pk-row"><span class="nm">{e(k)}</span><div class="right">{v}</div></div>' for k, v in rows)
     return f'<div class="pk"><div class="pk-card"><div class="pk-card-h"><span class="pk-card-title">System status</span></div>{body}</div></div>'
 
