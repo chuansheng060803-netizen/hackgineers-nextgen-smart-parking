@@ -36,6 +36,28 @@ Optional: `DASHBOARD_API_TOKEN` (sent as `Authorization: Bearer <token>` on cont
 The dashboard then calls `GET {DASHBOARD_API_URL}/api/snapshot` every few seconds. If the backend stops answering,
 the page keeps showing the last good data with a warning banner instead of crashing.
 
+## Show the real data from the SQLite database (`db` mode)
+
+The backend (`python backend/run_flow.py --db`) writes parking sessions, payments, spots and events to SQLite. The dashboard
+only reads that file; it never talks to the simulator.
+
+```
+$env:PARKING_DB_PATH = "database/runtime.db"      # optional; default is database/parking.db
+python backend/create_user.py --username alice --role Admin      # once, asks for a password
+$env:DASHBOARD_SOURCE = "db"
+streamlit run dashboard/app.py
+```
+
+- Sign in with a database user (Admin or Operator). Nothing is shown before sign-in.
+- Shown from the database: parking spots (free / on the way / occupied / broken / under repair, current car, zone), cars inside,
+  visit history with payment status (pending or paid), the activity feed and gates (only if the gates table has rows).
+- Not stored in the database, so those panels stay empty: exhaust fans, carbon monoxide, occupancy history, penalty amounts,
+  the 30-day archive. Gate status shows as unavailable until real gate synchronisation exists.
+- Manual gate/fan controls are read-only in this mode. Income counts only payments that are marked paid.
+- `database/*.db` is git-ignored runtime data (it also holds password hashes): do not commit it. Use a fresh database for real
+  runs: `database/test_database.py` and `test_authentication.py` write test data (a fake `gate0`, users `admin_test`, `operator_test`)
+  into the default `database/parking.db`.
+
 ## What the backend needs to return (`/api/snapshot`)
 
 One JSON object. Every key is optional; missing keys show as empty panels.
@@ -100,3 +122,6 @@ reply: {"ok": true, "message": "gate0 opened."}
 - `styles.py`: colours (light and dark) and CSS
 - `data_source.py`: mock or API switch (`fetch_api`, `fetch_history`, `send_control`)
 - `mock_data.py`: the fake car park, including `control()` for the manual buttons
+- `db_source.py`: builds the snapshot from the SQLite database (read-only, `DASHBOARD_SOURCE=db`)
+- `auth.py`: database login for `db` mode (Admin / Operator)
+- `test_db_source.py`: offline tests for `db` mode (`python -B -m unittest test_db_source` from `dashboard/`)
