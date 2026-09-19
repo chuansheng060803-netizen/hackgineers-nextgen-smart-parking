@@ -106,3 +106,17 @@ class SimulatorClient:
             "POST",
             f"/api/v1/car/{quote(name, safe='')}/goto/{quote(destination, safe='')}",
         )
+
+    def charge_car(self, name, parking_cost, charging_cost):
+        """POST /api/v1/car/{name}/charge (201, empty body). Returns None.
+
+        parking_cost and charging_cost are sent as query parameters.
+        """
+        self.call(
+            "POST",
+            f"/api/v1/car/{quote(name, safe='')}/charge",
+            params={
+                "parkingCost": parking_cost,
+                "chargingCost": charging_cost,
+            },
+        )
