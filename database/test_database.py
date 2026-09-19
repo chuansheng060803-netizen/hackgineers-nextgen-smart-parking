@@ -1,4 +1,18 @@
-from database.database import init_database
+"""Manual smoke test for the service layer. Writes to its own scratch database.
+
+Run it from the repo root:  python -B -m database.test_database
+"""
+import os
+from pathlib import Path
+
+# Never write test rows into the real parking.db: they end up on the dashboard
+# as cars that never existed. Set PARKING_DB_PATH yourself to override.
+os.environ.setdefault(
+    "PARKING_DB_PATH",
+    str(Path(__file__).resolve().parent / "test_scratch.db"),
+)
+
+from database.database import init_database  # noqa: E402
 
 from database.database_service import (
     upsert_parking_spot,

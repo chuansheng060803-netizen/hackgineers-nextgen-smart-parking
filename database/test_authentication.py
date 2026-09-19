@@ -1,4 +1,18 @@
-from database.database import init_database, get_connection
+"""Manual authentication test. Writes to its own scratch database.
+
+Run it from the repo root:  python -B -m database.test_authentication
+"""
+import os
+from pathlib import Path
+
+# Never write test users into the real parking.db (it holds live password
+# hashes). Set PARKING_DB_PATH yourself to override.
+os.environ.setdefault(
+    "PARKING_DB_PATH",
+    str(Path(__file__).resolve().parent / "test_scratch.db"),
+)
+
+from database.database import init_database, get_connection  # noqa: E402
 from database.database_service import (
     create_user,
     authenticate_user,
