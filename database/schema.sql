@@ -1,88 +1,21 @@
-PRAGMA foreign_keys = ON;
-
--- =========================================================
--- USERS
--- Admin / Operator accounts for the web system
--- =========================================================
-
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('Admin', 'Operator')),
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-
--- =========================================================
--- PARKING SPOTS
--- Current state of every parking spot
--- =========================================================
-
-CREATE TABLE IF NOT EXISTS parking_spots (
-    name TEXT PRIMARY KEY,
-    zone TEXT,
-    purpose TEXT,
-    parking_for_car_type TEXT,
-
-    status TEXT NOT NULL DEFAULT 'available',
-    current_car TEXT,
-
-    broken INTEGER NOT NULL DEFAULT 0,
-    under_maintenance INTEGER NOT NULL DEFAULT 0,
-
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-
--- =========================================================
--- GATES
--- Current state of barrier gates
--- =========================================================
-
-CREATE TABLE IF NOT EXISTS gates (
-    name TEXT PRIMARY KEY,
-
-    state TEXT NOT NULL DEFAULT 'Closed',
-
-    broken INTEGER NOT NULL DEFAULT 0,
-    under_maintenance INTEGER NOT NULL DEFAULT 0,
-
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-
--- =========================================================
--- PARKING SESSIONS
--- One record for each car visit
--- =========================================================
-
 CREATE TABLE IF NOT EXISTS parking_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    car_name TEXT NOT NULL,
+    plate TEXT NOT NULL,
     car_type TEXT,
 
+    entry_gate_name TEXT,
+    arrival_time TEXT,
+
     spot_name TEXT,
+    start_park TEXT,
+    end_park TEXT,
 
-    arrival_time TEXT NOT NULL,
-    parked_time TEXT,
-    departure_time TEXT,
+    exit_gate_name TEXT,
+    exit_time TEXT,
 
-    status TEXT NOT NULL DEFAULT 'active',
-
-    FOREIGN KEY (spot_name)
-        REFERENCES parking_spots(name)
-        ON UPDATE CASCADE
-        ON DELETE SET NULL
+    status TEXT NOT NULL DEFAULT 'ACTIVE'
 );
-
-
--- =========================================================
--- PAYMENTS
--- Charges associated with a parking session
--- =========================================================
 
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,50 +25,55 @@ CREATE TABLE IF NOT EXISTS payments (
     parking_cost REAL NOT NULL DEFAULT 0,
     charging_cost REAL NOT NULL DEFAULT 0,
 
-    status TEXT NOT NULL DEFAULT 'pending',
-    paid_at TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+
+    paid_time TEXT,
+    completed_time TEXT,
 
     FOREIGN KEY (session_id)
         REFERENCES parking_sessions(id)
-        ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS parking_spots (
+    name TEXT PRIMARY KEY,
 
--- =========================================================
--- EVENTS
--- Raw simulator/backend events for searching and dashboard
--- =========================================================
+    zone TEXT,
+
+    status TEXT NOT NULL DEFAULT 'FREE',
+
+    current_plate TEXT,
+
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS gates (
+    name TEXT PRIMARY KEY,
+
+    status TEXT NOT NULL,
+
+    updated_at TEXT
+);
 
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    event_type TEXT NOT NULL,
+    event_id TEXT,
+    event_class TEXT,
 
-    car_name TEXT,
-    component_name TEXT,
+    plate TEXT,
 
-    payload_json TEXT NOT NULL,
+    event_time TEXT,
 
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    raw_data TEXT
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
 
--- =========================================================
--- INDEXES
--- Makes event/session searching faster
--- =========================================================
+    username TEXT NOT NULL UNIQUE,
 
-CREATE INDEX IF NOT EXISTS idx_events_type
-ON events(event_type);
+    password_hash TEXT NOT NULL,
 
-CREATE INDEX IF NOT EXISTS idx_events_created_at
-ON events(created_at);
-
-CREATE INDEX IF NOT EXISTS idx_events_car
-ON events(car_name);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_car
-ON parking_sessions(car_name);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_status
-ON parking_sessions(status);
+    role TEXT NOT NULL
+        CHECK (role IN ('ADMIN', 'OPERATOR'))
+);
