@@ -1,0 +1,7 @@
+# Theme for the dashboard (run "streamlit run dashboard/app.py" from the repo root).
+[theme]
+primaryColor = "#2a78d6"
+[server]
+headless = true
+[browser]
+gatherUsageStats = false
