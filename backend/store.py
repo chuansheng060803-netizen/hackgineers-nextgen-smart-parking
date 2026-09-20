@@ -42,6 +42,16 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = _REPO_ROOT / "database" / "simulator_schema.sql"
+APP_SCHEMA_PATH = _REPO_ROOT / "database" / "app_schema.sql"    # our own records (charges, users, ...)
+
+# Our own records (not simulator data). key = the column an update is matched on;
+# None = every record is a new row.
+OWN_TABLES = {
+    "charges": ("charge_id", ("charge_id", "CarPlateNumber", "CarType", "billed_parking",
+                              "billed_charging", "billed_total", "billed_at", "status", "paid_at")),
+    "gate_control": ("gate", ("gate", "mode", "set_by", "set_at")),
+    "control_log": ("log_id", ("log_id", "at", "username", "role", "gate", "mode", "result", "detail")),
+}
 
 BATCH_SIZE = 200              # jobs written per transaction
 POLL_STATUS_EVERY_S = 2.0     # freshness rows are refreshed at most this often
@@ -256,6 +266,18 @@ class Store:
             return
         self._put(("state", endpoint, items, _now(), duration_ms))
 
+    def submit_record(self, table, values):
+        """Queue one of OUR OWN records (see OWN_TABLES), e.g. a bill and later its payment.
+
+        Same single writer as everything else, so a record can never fight the simulator
+        data for the database. A record for an unknown table or with unknown fields is refused.
+        """
+        spec = OWN_TABLES.get(table)
+        if spec is None or not isinstance(values, dict) or not set(values) <= set(spec[1]):
+            logger.warning("submit_record: refused %r %r", table, values)
+            return
+        self._put(("record", table, dict(values)))
+
     def submit_poll_error(self, endpoint, error, duration_ms=None):
         """Queue "this endpoint could not be read" so the dashboard can show stale data as stale."""
         self._put(("poll_error", endpoint, str(error)[:500], _now(), duration_ms))
@@ -272,6 +294,7 @@ class Store:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=15000")
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.executescript(APP_SCHEMA_PATH.read_text(encoding="utf-8"))
         return conn
 
     def _load_cache(self, conn):
@@ -362,6 +385,8 @@ class Store:
                 self._apply_state(conn, *job[1:])
             elif kind == "poll_error":
                 self._apply_poll_error(conn, *job[1:])
+            elif kind == "record":
+                self._apply_record(conn, job[1], job[2])
             conn.execute("RELEASE job")
         except Exception:
             self.stats["job_errors"] += 1
@@ -369,6 +394,20 @@ class Store:
             conn.execute("ROLLBACK TO job")
             conn.execute("RELEASE job")
             self._load_cache(conn)      # the cache must match what is really in the database
+
+    # ---- our own records ----
+
+    def _apply_record(self, conn, table, values):
+        key, _columns = OWN_TABLES[table]
+        names = list(values)
+        cols = ", ".join(f'"{n}"' for n in names)
+        marks = ", ".join("?" for _ in names)
+        sql = f'INSERT INTO "{table}" ({cols}) VALUES ({marks})'
+        updates = [n for n in names if n != key]
+        if key is not None and key in values and updates:
+            sql += (f' ON CONFLICT("{key}") DO UPDATE SET '
+                    + ", ".join(f'"{n}" = excluded."{n}"' for n in updates))
+        conn.execute(sql, [_sql_value(values[n]) for n in names])
 
     # ---- webhook events ----
 
