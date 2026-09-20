@@ -502,6 +502,44 @@ class TestWriterSurvives(StoreTestCase):
         self.assertEqual(len(self.q("SELECT * FROM car_spot_action")), 1)
 
 
+class TestOwnRecords(StoreTestCase):
+    """Our own records (bills) go through the same single writer."""
+
+    def charge(self, charge_id=1, status="billed", paid_at=None):
+        return {"charge_id": charge_id, "CarPlateNumber": "TLT 388", "CarType": "Normal",
+                "billed_parking": 1.5, "billed_charging": 0, "billed_total": 1.5,
+                "billed_at": "2026-09-20 10:00:00", "status": status, "paid_at": paid_at}
+
+    def test_a_bill_is_stored_and_later_updated_in_place(self):
+        self.store.submit_record("charges", self.charge())
+        self.store.submit_record("charges", self.charge(status="paid", paid_at="2026-09-20 10:01:00"))
+        self.assertTrue(self.store.flush())
+        rows = self.q("SELECT * FROM charges")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["status"], rows[0]["paid_at"]), ("paid", "2026-09-20 10:01:00"))
+
+    def test_two_bills_are_two_rows(self):
+        self.store.submit_record("charges", self.charge(1))
+        self.store.submit_record("charges", self.charge(2))
+        self.assertTrue(self.store.flush())
+        self.assertEqual(len(self.q("SELECT * FROM charges")), 2)
+
+    def test_unknown_table_or_field_is_refused_and_nothing_breaks(self):
+        self.store.submit_record("payments", self.charge())
+        self.store.submit_record("charges", dict(self.charge(), surprise=1))
+        self.store.submit_record("charges", "not a dict")
+        self.assertTrue(self.store.flush())
+        self.assertEqual(self.q("SELECT COUNT(*) n FROM charges")[0]["n"], 0)
+        self.assertEqual(self.store.stats["job_errors"], 0)
+
+    def test_a_bad_record_is_skipped_and_the_next_one_still_saves(self):
+        self.store.submit_record("charges", dict(self.charge(1), status="nonsense"))   # breaks the CHECK
+        self.store.submit_record("charges", self.charge(2))
+        self.assertTrue(self.store.flush())
+        self.assertEqual([r["charge_id"] for r in self.q("SELECT charge_id FROM charges")], [2])
+        self.assertEqual(self.store.stats["job_errors"], 1)
+
+
 class TestItemsFromResponse(unittest.TestCase):
     def test_rules(self):
         spec = STATE_TABLES["list-parking-spots"]

@@ -107,6 +107,13 @@ class SimulatorClient:
         """POST /api/v1/barrier-gates/{name}/close (201, empty body). Returns None."""
         self.call("POST", f"/api/v1/barrier-gates/{quote(name, safe='')}/close")
 
+    def repair_gate(self, name):
+        """POST /api/v1/barrier-gates/{name}/repair (empty body). Returns None.
+
+        Asks for a barrier to be repaired (it then shows isUnderMaintenance until done).
+        """
+        self.call("POST", f"/api/v1/barrier-gates/{quote(name, safe='')}/repair")
+
     def move_car(self, name, destination):
         """POST /api/v1/car/{name}/goto/{destination} (201, empty body). Returns None.
 
