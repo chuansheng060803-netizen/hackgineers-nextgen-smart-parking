@@ -643,49 +643,88 @@ class DashboardState:
         """Finished visits from the database, newest first. [] if no database."""
         if not self.use_db:
             return []
+
         try:
-            from database import database_service as service
             from database.database import get_connection
         except Exception:
             return []
+
         query = """
-            SELECT s.car_name, s.car_type, s.spot_name, s.arrival_time,
-                   s.departure_time, s.status,
-                   COALESCE(SUM(p.parking_cost + p.charging_cost), 0) AS charge
+            SELECT
+                s.plate,
+                s.car_type,
+                s.spot_name,
+                s.arrival_time,
+                s.exit_time,
+                s.status,
+                COALESCE(
+                    SUM(p.parking_cost + p.charging_cost),
+                    0
+                ) AS charge
             FROM parking_sessions s
-            LEFT JOIN payments p ON p.session_id = s.id AND p.status = 'paid'
-            WHERE s.departure_time IS NOT NULL
+            LEFT JOIN payments p
+                ON p.session_id = s.id
+                AND p.status IN ('PAID', 'COMPLETED')
+            WHERE s.exit_time IS NOT NULL
         """
+
         params = []
+
         if date:
             query += " AND date(s.arrival_time) = ?"
             params.append(date)
-        query += " GROUP BY s.id ORDER BY s.departure_time DESC"
+
+        query += """
+            GROUP BY s.id
+            ORDER BY s.exit_time DESC
+        """
+
         try:
             connection = get_connection()
+
             try:
-                rows = connection.execute(query, params).fetchall()
+                rows = connection.execute(
+                    query,
+                    params
+                ).fetchall()
             finally:
                 connection.close()
+
         except Exception:
-            logger.exception("Reading visits from the database failed")
+            logger.exception(
+                "Reading visits from the database failed"
+            )
             return []
+
         out = []
+
         for row in rows:
             arrival = _parse_time(row["arrival_time"])
-            departure = _parse_time(row["departure_time"])
-            minutes = round((departure - arrival).total_seconds() / 60.0, 1) \
-                if arrival and departure else 0
+            departure = _parse_time(row["exit_time"])
+
+            minutes = (
+                round(
+                    (departure - arrival).total_seconds() / 60.0,
+                    1
+                )
+                if arrival and departure
+                else 0
+            )
+
             out.append({
-                "plate": row["car_name"],
+                "plate": row["plate"],
                 "car_type": row["car_type"] or "Normal",
                 "spot": row["spot_name"] or "-",
                 "entered_at": row["arrival_time"],
-                "left_at": row["departure_time"],
+                "left_at": row["exit_time"],
                 "minutes": minutes,
-                "charge": round(float(row["charge"] or 0), 2),
+                "charge": round(
+                    float(row["charge"] or 0),
+                    2
+                ),
                 "status": "Completed",
             })
+
         return out
 
     def _archive_from_db(self, exclude=None):
@@ -794,9 +833,38 @@ def build_blueprint(state):
 
     @api.post("/api/control/<kind>/<name>/<action>")
     def control(kind, name, action):
-        body = request.get_json(silent=True) or {}
-        ok, message = state.control(kind, name, action, body.get("role"))
-        return jsonify({"ok": ok, "message": message}), (200 if ok else 403)
+        auth = request.authorization
+
+        if auth is None:
+            return jsonify({
+                "ok": False,
+                "message": "Authentication required."
+            }), 401
+
+        from database import database_service
+
+        user = database_service.authenticate_user(
+            auth.username,
+            auth.password
+        )
+
+        if user is None:
+            return jsonify({
+                "ok": False,
+                "message": "Invalid username or password."
+            }), 401
+
+        ok, message = state.control(
+            kind,
+            name,
+            action,
+            user["role"]
+        )
+
+        return jsonify({
+            "ok": ok,
+            "message": message
+        }), (200 if ok else 403)
 
     @api.get("/api/health")
     def health():

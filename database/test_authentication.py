@@ -1,119 +1,181 @@
-from database.database import init_database, get_connection
-from database.database_service import (
-    create_user,
-    authenticate_user,
-    has_role,
-)
+﻿import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import database.database as database_module
+from database import database_service as service
 
 
-init_database()
+class AuthenticationTests(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        test_db = Path(self.temp_dir.name) / "test_auth.db"
+
+        self.db_patch = mock.patch.object(
+            database_module,
+            "DATABASE_PATH",
+            test_db,
+        )
+
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+
+        database_module.init_database()
+
+    def test_admin_login(self):
+        user_id = service.create_user(
+            "admin_test",
+            "Admin123!",
+            "Admin",
+        )
+
+        self.assertIsNotNone(user_id)
+
+        user = service.authenticate_user(
+            "admin_test",
+            "Admin123!",
+        )
+
+        self.assertIsNotNone(user)
+        self.assertEqual(
+            user["username"],
+            "admin_test",
+        )
+        self.assertEqual(
+            user["role"],
+            "ADMIN",
+        )
+
+    def test_operator_login(self):
+        service.create_user(
+            "operator_test",
+            "Operator123!",
+            "Operator",
+        )
+
+        user = service.authenticate_user(
+            "operator_test",
+            "Operator123!",
+        )
+
+        self.assertIsNotNone(user)
+        self.assertEqual(
+            user["role"],
+            "OPERATOR",
+        )
+
+    def test_wrong_password_is_rejected(self):
+        service.create_user(
+            "admin_test",
+            "Admin123!",
+            "Admin",
+        )
+
+        user = service.authenticate_user(
+            "admin_test",
+            "wrongpassword",
+        )
+
+        self.assertIsNone(user)
+
+    def test_unknown_user_is_rejected(self):
+        user = service.authenticate_user(
+            "does_not_exist",
+            "password",
+        )
+
+        self.assertIsNone(user)
+
+    def test_role_checks(self):
+        service.create_user(
+            "admin_test",
+            "Admin123!",
+            "Admin",
+        )
+
+        service.create_user(
+            "operator_test",
+            "Operator123!",
+            "Operator",
+        )
+
+        admin = service.authenticate_user(
+            "admin_test",
+            "Admin123!",
+        )
+
+        operator = service.authenticate_user(
+            "operator_test",
+            "Operator123!",
+        )
+
+        self.assertTrue(
+            service.has_role(admin, "Admin")
+        )
+
+        self.assertFalse(
+            service.has_role(admin, "Operator")
+        )
+
+        self.assertTrue(
+            service.has_role(operator, "Operator")
+        )
+
+        self.assertFalse(
+            service.has_role(operator, "Admin")
+        )
+
+    def test_password_is_hashed(self):
+        service.create_user(
+            "admin_test",
+            "Admin123!",
+            "Admin",
+        )
+
+        user = service.get_user_by_username(
+            "admin_test"
+        )
+
+        self.assertNotEqual(
+            user["password_hash"],
+            "Admin123!",
+        )
+
+        self.assertTrue(
+            user["password_hash"].startswith(
+                "pbkdf2_sha256$"
+            )
+        )
+
+    def test_duplicate_username_is_rejected(self):
+        service.create_user(
+            "admin_test",
+            "Admin123!",
+            "Admin",
+        )
+
+        with self.assertRaises(
+            sqlite3.IntegrityError
+        ):
+            service.create_user(
+                "admin_test",
+                "Different123!",
+                "Operator",
+            )
+
+    def test_invalid_role_is_rejected(self):
+        with self.assertRaises(ValueError):
+            service.create_user(
+                "viewer_test",
+                "Password123!",
+                "Viewer",
+            )
 
 
-# -------------------------------------------------
-# Remove old test users so this test can be rerun
-# -------------------------------------------------
-
-connection = get_connection()
-
-try:
-    connection.execute(
-        "DELETE FROM users WHERE username IN (?, ?)",
-        ("admin_test", "operator_test"),
-    )
-    connection.commit()
-finally:
-    connection.close()
-
-
-# -------------------------------------------------
-# Create test users
-# -------------------------------------------------
-
-admin_id = create_user(
-    username="admin_test",
-    password="Admin123!",
-    role="Admin",
-)
-
-operator_id = create_user(
-    username="operator_test",
-    password="Operator123!",
-    role="Operator",
-)
-
-print("Created Admin:", admin_id)
-print("Created Operator:", operator_id)
-
-
-# -------------------------------------------------
-# Test 1: Correct Admin login
-# -------------------------------------------------
-
-admin = authenticate_user(
-    "admin_test",
-    "Admin123!",
-)
-
-assert admin is not None
-assert admin["role"] == "Admin"
-
-print("✅ Correct Admin login passed")
-
-
-# -------------------------------------------------
-# Test 2: Wrong Admin password
-# -------------------------------------------------
-
-wrong_password = authenticate_user(
-    "admin_test",
-    "wrongpassword",
-)
-
-assert wrong_password is None
-
-print("✅ Wrong password rejected")
-
-
-# -------------------------------------------------
-# Test 3: Correct Operator login
-# -------------------------------------------------
-
-operator = authenticate_user(
-    "operator_test",
-    "Operator123!",
-)
-
-assert operator is not None
-assert operator["role"] == "Operator"
-
-print("✅ Correct Operator login passed")
-
-
-# -------------------------------------------------
-# Test 4: Unknown username
-# -------------------------------------------------
-
-unknown_user = authenticate_user(
-    "does_not_exist",
-    "password",
-)
-
-assert unknown_user is None
-
-print("✅ Unknown username rejected")
-
-
-# -------------------------------------------------
-# Test 5: Role checks
-# -------------------------------------------------
-
-assert has_role(admin, "Admin") is True
-assert has_role(admin, "Operator") is False
-
-assert has_role(operator, "Operator") is True
-assert has_role(operator, "Admin") is False
-
-print("✅ Admin / Operator role checks passed")
-
-
-print("\nALL AUTHENTICATION TESTS PASSED ✅")
+if __name__ == "__main__":
+    unittest.main()
