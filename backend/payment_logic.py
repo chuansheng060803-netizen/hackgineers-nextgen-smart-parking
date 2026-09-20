@@ -1,61 +1,31 @@
-def calculate_charges(car_type, minutes_parked):
-    parking_cost = minutes_parked
+"""Payment logic for calculating parking and charging costs."""
+from datetime import datetime
 
-    if car_type == "Electric":
-        charging_cost = minutes_parked
-    else:
-        charging_cost = 0
+PARKING_RATE_PER_HOUR = 2.0
+CHARGING_RATE_PER_HOUR = 5.0
+
+def process_payment(car_type, start_time, end_time, at_exit=True, already_paid=False):
+    if already_paid:
+        return {"parkingCost": 0.0, "chargingCost": 0.0}
+
+    if not isinstance(start_time, datetime):
+        start_time = datetime.now()
+    if not isinstance(end_time, datetime):
+        end_time = datetime.now()
+
+    duration_seconds = max(0, (end_time - start_time).total_seconds())
+    duration_hours = max(1.0 / 60.0, duration_seconds / 3600.0)
+
+    parking_cost = round(duration_hours * PARKING_RATE_PER_HOUR, 2)
+    charging_cost = 0.0
+
+    if str(car_type).upper() in ("EV", "ELECTRIC"):
+        charging_cost = round(duration_hours * CHARGING_RATE_PER_HOUR, 2)
 
     return {
-        "parkingCost": parking_cost,
+        "parkingCost": max(0.50, parking_cost),
         "chargingCost": charging_cost
     }
 
-
-def can_charge(at_exit, already_paid):
-    if not at_exit:
-        return False
-
-    if already_paid:
-        return False
-
-    return True
-
-
-def calculate_parking_minutes(entry_time, exit_time):
-    duration = exit_time - entry_time
-
-    total_seconds = duration.total_seconds()
-
-    minutes = total_seconds / 60
-
-    return minutes
-
-
-def process_payment(car_type, entry_time, exit_time, at_exit, already_paid):
-
-    # Step 1: Check whether this car should be charged
-    if not can_charge(at_exit, already_paid):
-        return None
-
-    # Step 2: Calculate how long the car parked
-    minutes_parked = calculate_parking_minutes(
-        entry_time,
-        exit_time
-    )
-
-    # Step 3: Calculate the charges
-    charges = calculate_charges(
-        car_type,
-        minutes_parked
-    )
-
-    # Step 4: Return the result
-    return charges
-
-
-def get_post_payment_action(payment_successful):
-    if payment_successful:
-        return "ALLOW_DEPARTURE"
-
-    return "PAYMENT_FAILED"
+def get_post_payment_action(payment_valid):
+    return "ALLOW_DEPARTURE" if payment_valid else "DENY_DEPARTURE"

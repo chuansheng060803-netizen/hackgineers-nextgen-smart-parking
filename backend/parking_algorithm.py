@@ -10,7 +10,17 @@ def is_operational(spot):
 
 
 def is_available(spot):
-    return spot.get("detectedCars", 0) == 0
+    detected_cars = spot.get("detectedCars", [])
+
+    if isinstance(detected_cars, list):
+        return len(detected_cars) == 0
+
+    return detected_cars == 0
+
+
+def get_zone(spot):
+    return spot.get("zoneParent")
+
 
 
 def is_compatible(car, spot):
@@ -49,9 +59,28 @@ def get_available_spots(car, parking_spots):
 
 
 def select_parking_spot(car, parking_spots):
+    zones = ["ZONE1", "ZONE2", "ZONE3"]
+
+    for zone in zones:
+        zone_spots = get_available_spots_in_zone(
+            car,
+            parking_spots,
+            zone
+        )
+
+        if len(zone_spots) > 0:
+            return zone_spots[0]
+
+    return None
+
+
+def get_available_spots_in_zone(car, parking_spots, zone):
     available_spots = get_available_spots(car, parking_spots)
 
-    if len(available_spots) == 0:
-        return None
+    zone_spots = []
 
-    return available_spots[0]
+    for spot in available_spots:
+        if get_zone(spot) == zone:
+            zone_spots.append(spot)
+
+    return zone_spots

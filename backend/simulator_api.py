@@ -95,6 +95,9 @@ class SimulatorClient:
         """GET /api/v1/list-parking-spots -> list of spot dicts."""
         return self.call("GET", "/api/v1/list-parking-spots")
 
+    def list_zones(self):
+        return self.call("GET", "/api/v1/list-zones")
+
     def list_barriers(self):
         """GET /api/v1/list-barriers -> parsed JSON."""
         return self.call("GET", "/api/v1/list-barriers")
@@ -130,4 +133,50 @@ class SimulatorClient:
                 "parkingCost": parking_cost,
                 "chargingCost": charging_cost,
             },
+        )
+
+    def list_lights(self):
+        return self.call(
+            "GET",
+            "/api/v1/list-lights"
+        )
+
+
+    def list_exhaust_fans(self):
+        return self.call(
+            "GET",
+            "/api/v1/list-exhaust-fans"
+        )
+
+
+    def list_alarms(self):
+        return self.call(
+            "GET",
+            "/api/v1/list-alarms"
+        )
+
+    def turn_fan_on(self, name):
+        self.call(
+            "POST",
+            f"/api/v1/exhaust-fans/{quote(name, safe='')}/on"
+        )
+
+
+    def turn_fan_off(self, name):
+        self.call(
+            "POST",
+            f"/api/v1/exhaust-fans/{quote(name, safe='')}/off"
+        )
+
+    def turn_light_on(self, name):
+        self.call(
+            "POST",
+            f"/api/v1/lights/{quote(name, safe='')}/on"
+        )
+
+
+    def turn_light_off(self, name):
+        self.call(
+            "POST",
+            f"/api/v1/lights/{quote(name, safe='')}/off"
         )
